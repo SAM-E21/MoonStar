@@ -284,7 +284,7 @@ export class LunarOutpostScene {
       }),
     );
     const earth = new THREE.Mesh(earthGeo, earthMat);
-    earth.position.set(-76, 10, -24);
+    earth.position.set(-76, 30, -23);
     earth.scale.setScalar(0.85);
     earth.rotation.z = 0.4;
     this.scene.add(earth);
