@@ -13,6 +13,7 @@ import {
 import { soundEngine } from '../../audio/soundEngine';
 import { createRandomMiniGameSeed, generateRoverMap, type RoverMapConfig } from '../../engine/minigames';
 import { t } from '../../i18n/translations';
+import { MiniGameFrame } from './MiniGameFrame';
 import type { MiniGameComponentProps } from './types';
 
 export const RoverMiniGame: React.FC<MiniGameComponentProps> = ({
@@ -106,9 +107,65 @@ export const RoverMiniGame: React.FC<MiniGameComponentProps> = ({
   }, [moveRover]);
 
   return (
-    <div className="space-y-3">
+    <MiniGameFrame
+      icon={<Bot className="w-4 h-4 text-amber-300" />}
+      instruction={t(lang, 'mg.rover_ice.desc')}
+      progressPct={(collectedIce.length / Math.max(1, map.crystals.length)) * 100}
+      progressTone="cyan"
+      stats={[
+        { label: 'H2O', value: `${collectedIce.length}/${map.crystals.length}`, tone: 'cyan' },
+      ]}
+      feedback={hazardHitMsg ? { tone: 'warning', text: t(lang, 'mg.rover.hazardWarn') } : null}
+      footer={
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={rerollMap}
+            className="px-3 py-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1.5 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            {t(lang, 'mg.rover.newMap')}
+          </button>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => moveRover(-1, 0)}
+              aria-label="Left"
+              className="p-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => moveRover(0, -1)}
+              aria-label="Up"
+              className="p-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowUp className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => moveRover(0, 1)}
+              aria-label="Down"
+              className="p-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowDown className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => moveRover(1, 0)}
+              aria-label="Right"
+              className="p-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      }
+    >
       <div
-        className="grid gap-1.5 bg-[#0c162d] p-3 rounded-xl border border-slate-800"
+        className="grid gap-1.5"
         style={{ gridTemplateColumns: `repeat(${map.cols}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: map.rows }).map((_, y) =>
@@ -126,12 +183,12 @@ export const RoverMiniGame: React.FC<MiniGameComponentProps> = ({
                   isRover
                     ? 'bg-amber-400 text-slate-950 border-amber-200'
                     : isRock
-                      ? 'bg-slate-800 border-slate-700 text-slate-400'
+                      ? 'bg-slate-900 border-slate-800 text-slate-500'
                       : isIce
                         ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200'
                         : isHazard
-                          ? 'bg-amber-950/60 border-amber-600/50 text-amber-400'
-                          : 'bg-[#081020] border-slate-800 text-slate-600'
+                          ? 'bg-rose-950/60 border-rose-500/60 text-rose-300'
+                          : 'bg-[#0b152a] border-slate-800 text-slate-600'
                 }`}
               >
                 {isRover ? (
@@ -150,62 +207,6 @@ export const RoverMiniGame: React.FC<MiniGameComponentProps> = ({
           }),
         )}
       </div>
-
-      {hazardHitMsg && (
-        <div className="text-[11px] font-bold text-amber-300 text-center">{t(lang, 'mg.rover.hazardWarn')}</div>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5 bg-[#0c162d] px-2.5 py-1.5 rounded-lg border border-slate-800">
-            <Snowflake className="w-4 h-4" />
-            {collectedIce.length}/{map.crystals.length}
-          </div>
-          <button
-            type="button"
-            onClick={rerollMap}
-            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-slate-200 flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {t(lang, 'mg.rover.newMap')}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => moveRover(-1, 0)}
-            aria-label="Left"
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => moveRover(0, -1)}
-            aria-label="Up"
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => moveRover(0, 1)}
-            aria-label="Down"
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-          >
-            <ArrowDown className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => moveRover(1, 0)}
-            aria-label="Right"
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-          >
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
+    </MiniGameFrame>
   );
 };

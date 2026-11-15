@@ -36,18 +36,18 @@ export function createPrng(seed: number): () => number {
 
 export function getMiniGameTimeLimit(kind: MiniGameKind, difficulty: MiniGameDifficulty): number {
   const base: Record<MiniGameKind, number> = {
-    habitat_systems: 32,
-    solar_align: 30,
-    greenhouse_balance: 28,
+    habitat_systems: 36,
+    solar_align: 35,
+    greenhouse_balance: 38,
     water_pipes: 42,
-    oxygen_mix: 26,
-    comms_tune: 30,
-    shelter_prep: 30,
+    oxygen_mix: 36,
+    comms_tune: 34,
+    shelter_prep: 40,
     rover_ice: 35,
-    research_lab: 45,
+    research_lab: 42,
   };
-  const offset = difficulty === 'easy' ? 8 : difficulty === 'hard' ? -6 : 0;
-  return Math.max(18, base[kind] + offset);
+  const offset = difficulty === 'easy' ? 8 : difficulty === 'hard' ? -5 : 0;
+  return Math.max(20, base[kind] + offset);
 }
 
 // ============================================================
@@ -531,3 +531,202 @@ export const RESEARCH_CASES: ResearchCase[] = [
     correctOptionIndex: 0,
   },
 ];
+
+// ============================================================
+// 7. SHELTER EVACUATION MAZE GENERATOR + BFS SOLVABILITY
+// ============================================================
+export interface ShelterAstronaut {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  rescued: boolean;
+  colorClass: string;
+}
+
+export interface ShelterMazeConfig {
+  cols: number;
+  rows: number;
+  shelterPos: { x: number; y: number };
+  walls: string[];
+  radiationZones: string[];
+  gates: string[];
+  astronauts: ShelterAstronaut[];
+}
+
+const ASTRONAUT_ROSTER: Array<{ id: string; name: string; colorClass: string }> = [
+  { id: 'sofia', name: 'Sofía', colorClass: 'bg-cyan-400 text-slate-950 border-cyan-200' },
+  { id: 'mateo', name: 'Mateo', colorClass: 'bg-amber-400 text-slate-950 border-amber-200' },
+  { id: 'leo', name: 'Leo', colorClass: 'bg-emerald-400 text-slate-950 border-emerald-200' },
+  { id: 'luna', name: 'Luna', colorClass: 'bg-violet-400 text-slate-950 border-violet-200' },
+];
+
+export function areAllAstronautsReachable(maze: ShelterMazeConfig): boolean {
+  const blocked = new Set(maze.walls);
+  const reachable = getReachableCells(maze.cols, maze.rows, maze.shelterPos, blocked);
+  if (maze.astronauts.length === 0) return false;
+  return maze.astronauts.every((a) => !blocked.has(cellKey(a.x, a.y)) && reachable.has(cellKey(a.x, a.y)));
+}
+
+export function generateShelterMaze(difficulty: MiniGameDifficulty, seed = Date.now()): ShelterMazeConfig {
+  const rng = createPrng(seed);
+  const cols = difficulty === 'easy' ? 6 : 7;
+  const rows = 5;
+  const crewCount = difficulty === 'easy' ? 2 : difficulty === 'normal' ? 3 : 4;
+  const wallCount = difficulty === 'easy' ? 5 : difficulty === 'normal' ? 7 : 9;
+  const radCount = difficulty === 'easy' ? 2 : difficulty === 'normal' ? 3 : 4;
+  const gateCount = 2;
+
+  const shelterPos = {
+    x: Math.floor(cols / 2),
+    y: Math.floor(rows / 2),
+  };
+  const shelterKey = cellKey(shelterPos.x, shelterPos.y);
+
+  const allOtherKeys: string[] = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const k = cellKey(x, y);
+      if (k !== shelterKey) allOtherKeys.push(k);
+    }
+  }
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const pool = [...allOtherKeys];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+
+    const walls = pool.slice(0, wallCount);
+    const blocked = new Set(walls);
+    const reachable = getReachableCells(cols, rows, shelterPos, blocked);
+
+    const farOpen = Array.from(reachable).filter((k) => {
+      if (k === shelterKey) return false;
+      const [x, y] = k.split(',').map(Number);
+      return Math.abs(x - shelterPos.x) + Math.abs(y - shelterPos.y) >= 2;
+    });
+
+    if (farOpen.length < crewCount + radCount + gateCount) continue;
+
+    for (let i = farOpen.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [farOpen[i], farOpen[j]] = [farOpen[j], farOpen[i]];
+    }
+
+    const chosenCrew = farOpen.slice(0, crewCount);
+    const crewSet = new Set(chosenCrew);
+
+    const remainingOpen = Array.from(reachable).filter((k) => k !== shelterKey && !crewSet.has(k));
+    for (let i = remainingOpen.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [remainingOpen[i], remainingOpen[j]] = [remainingOpen[j], remainingOpen[i]];
+    }
+
+    const radiationZones = remainingOpen.slice(0, radCount);
+    const gates = remainingOpen.slice(radCount, radCount + gateCount);
+
+    const astronauts: ShelterAstronaut[] = chosenCrew.map((k, idx) => {
+      const [ax, ay] = k.split(',').map(Number);
+      const profile = ASTRONAUT_ROSTER[idx % ASTRONAUT_ROSTER.length];
+      return {
+        id: profile.id,
+        name: profile.name,
+        x: ax,
+        y: ay,
+        rescued: false,
+        colorClass: profile.colorClass,
+      };
+    });
+
+    const candidate: ShelterMazeConfig = {
+      cols,
+      rows,
+      shelterPos,
+      walls,
+      radiationZones,
+      gates,
+      astronauts,
+    };
+
+    if (areAllAstronautsReachable(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Deterministic fallback guaranteed solvable
+  const fallbackAstros: ShelterAstronaut[] = ASTRONAUT_ROSTER.slice(0, crewCount).map((profile, idx) => ({
+    id: profile.id,
+    name: profile.name,
+    x: idx % 2 === 0 ? 0 : cols - 1,
+    y: idx < 2 ? 0 : rows - 1,
+    rescued: false,
+    colorClass: profile.colorClass,
+  }));
+
+  return {
+    cols,
+    rows,
+    shelterPos,
+    walls: ['1,1', '4,3'],
+    radiationZones: ['1,3'],
+    gates: ['2,2'],
+    astronauts: fallbackAstros,
+  };
+}
+
+// ============================================================
+// 8. RESEARCH MICROSCOPE SPECIMENS (FOCUS + CRYSTAL HUNT)
+// ============================================================
+export type SpecimenTargetShape = 'hex_ice' | 'titanium_prism' | 'glass_bead' | 'bio_cell';
+
+export interface MicroscopeSpecimen {
+  id: string;
+  shape: SpecimenTargetShape;
+  titleKey: string;
+  targetNameKey: string;
+  clueKey: string;
+  accentHex: string;
+  decoyHex: string;
+}
+
+export const MICRO_SPECIMENS: MicroscopeSpecimen[] = [
+  {
+    id: 'polar_ice',
+    shape: 'hex_ice',
+    titleKey: 'mg.res.spec.ice.title',
+    targetNameKey: 'mg.res.spec.ice.target',
+    clueKey: 'mg.res.spec.ice.clue',
+    accentHex: '#38bdf8',
+    decoyHex: '#64748b',
+  },
+  {
+    id: 'ilmenite_ore',
+    shape: 'titanium_prism',
+    titleKey: 'mg.res.spec.ore.title',
+    targetNameKey: 'mg.res.spec.ore.target',
+    clueKey: 'mg.res.spec.ore.clue',
+    accentHex: '#a78bfa',
+    decoyHex: '#78716c',
+  },
+  {
+    id: 'volcanic_glass',
+    shape: 'glass_bead',
+    titleKey: 'mg.res.spec.glass.title',
+    targetNameKey: 'mg.res.spec.glass.target',
+    clueKey: 'mg.res.spec.glass.clue',
+    accentHex: '#fbbf24',
+    decoyHex: '#64748b',
+  },
+  {
+    id: 'hydro_algae',
+    shape: 'bio_cell',
+    titleKey: 'mg.res.spec.algae.title',
+    targetNameKey: 'mg.res.spec.algae.target',
+    clueKey: 'mg.res.spec.algae.clue',
+    accentHex: '#34d399',
+    decoyHex: '#94a3b8',
+  },
+];
+

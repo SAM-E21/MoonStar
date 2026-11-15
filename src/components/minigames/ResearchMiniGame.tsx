@@ -1,16 +1,82 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Dna, FlaskConical, Microscope, Snowflake, Waves } from 'lucide-react';
+import { CheckCircle2, Eye, Microscope, Search } from 'lucide-react';
 import { soundEngine } from '../../audio/soundEngine';
-import { createPrng, type LabInstrumentId, RESEARCH_CASES } from '../../engine/minigames';
+import {
+  createPrng,
+  MICRO_SPECIMENS,
+  type SpecimenTargetShape,
+} from '../../engine/minigames';
 import { t } from '../../i18n/translations';
+import { MiniGameFrame } from './MiniGameFrame';
 import type { MiniGameComponentProps } from './types';
 
-const INSTRUMENTS: Array<{ id: LabInstrumentId; icon: React.ReactNode }> = [
-  { id: 'spectrometer', icon: <Waves className="w-4 h-4 text-violet-300" /> },
-  { id: 'microscope', icon: <Microscope className="w-4 h-4 text-cyan-300" /> },
-  { id: 'cryo_probe', icon: <Snowflake className="w-4 h-4 text-sky-300" /> },
-  { id: 'biosensor', icon: <Dna className="w-4 h-4 text-emerald-300" /> },
-];
+interface SlideInclusion {
+  id: string;
+  xPct: number;
+  yPct: number;
+  isTarget: boolean;
+  found: boolean;
+  rotation: number;
+}
+
+const renderSpecimenGlyph = (
+  shape: SpecimenTargetShape,
+  isTarget: boolean,
+  accentHex: string,
+  decoyHex: string,
+  size = 36,
+) => {
+  if (!isTarget) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 40 40">
+        <polygon points="8,24 14,10 28,12 34,26 20,33" fill={decoyHex} fillOpacity="0.55" stroke="#94a3b8" strokeWidth="2" />
+      </svg>
+    );
+  }
+
+  switch (shape) {
+    case 'hex_ice':
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <polygon
+            points="20,4 34,12 34,28 20,36 6,28 6,12"
+            fill={accentHex}
+            fillOpacity="0.3"
+            stroke={accentHex}
+            strokeWidth="2.5"
+          />
+          <circle cx="20" cy="20" r="4" fill="#e0f2fe" />
+        </svg>
+      );
+    case 'titanium_prism':
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <polygon
+            points="20,4 33,20 20,36 7,20"
+            fill={accentHex}
+            fillOpacity="0.35"
+            stroke={accentHex}
+            strokeWidth="2.5"
+          />
+          <line x1="20" y1="6" x2="20" y2="34" stroke="#ede9fe" strokeWidth="1.5" />
+        </svg>
+      );
+    case 'glass_bead':
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="13" fill={accentHex} fillOpacity="0.32" stroke={accentHex} strokeWidth="2.5" />
+          <circle cx="15" cy="15" r="4" fill="#fef3c7" />
+        </svg>
+      );
+    case 'bio_cell':
+      return (
+        <svg width={size} height={size} viewBox="0 0 40 40">
+          <ellipse cx="20" cy="20" rx="14" ry="10" fill={accentHex} fillOpacity="0.28" stroke={accentHex} strokeWidth="2.5" />
+          <ellipse cx="20" cy="20" rx="7" ry="4.5" fill="none" stroke="#a7f3d0" strokeWidth="2" />
+        </svg>
+      );
+  }
+};
 
 export const ResearchMiniGame: React.FC<MiniGameComponentProps> = ({
   lang,
@@ -21,173 +87,206 @@ export const ResearchMiniGame: React.FC<MiniGameComponentProps> = ({
   onPenaltySeconds,
   onWin,
 }) => {
-  const { activeCase, shuffledInstruments, shuffledOptions, correctOptionId, targetFreq, startWavelength } =
-    useMemo(() => {
-      const rng = createPrng(seed + 53);
-      const chosen = RESEARCH_CASES[Math.floor(rng() * RESEARCH_CASES.length)];
-      const instCopy = [...INSTRUMENTS];
-      for (let i = instCopy.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [instCopy[i], instCopy[j]] = [instCopy[j], instCopy[i]];
-      }
-      const indexedOpts = chosen.optionsKeys.map((key, idx) => ({ key, origIdx: idx }));
-      for (let i = indexedOpts.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [indexedOpts[i], indexedOpts[j]] = [indexedOpts[j], indexedOpts[i]];
-      }
-      const jitter = Math.round((rng() - 0.5) * 14);
-      const tFreq = Math.max(22, Math.min(78, chosen.targetFrequency + jitter));
-      const startW = tFreq > 50 ? Math.round(14 + rng() * 20) : Math.round(62 + rng() * 22);
-      return {
-        activeCase: chosen,
-        shuffledInstruments: instCopy,
-        shuffledOptions: indexedOpts,
-        correctOptionId: chosen.correctOptionIndex,
-        targetFreq: tFreq,
-        startWavelength: startW,
-      };
-    }, [seed]);
+  const setup = useMemo(() => {
+    const rng = createPrng(seed + 83);
+    const specimen = MICRO_SPECIMENS[Math.floor(rng() * MICRO_SPECIMENS.length)];
+    const targetFocus = Math.round(18 + rng() * 64); // 18..82
+    const initialFocus = targetFocus > 50 ? Math.round(8 + rng() * 20) : Math.round(72 + rng() * 20);
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [wavelength, setWavelength] = useState(startWavelength);
-  const [feedbackErr, setFeedbackErr] = useState(false);
+    const totalDecoys = difficulty === 'easy' ? 4 : difficulty === 'normal' ? 5 : 7;
+    const totalCount = 3 + totalDecoys;
 
-  const tol = difficulty === 'hard' ? 5 : difficulty === 'normal' ? 7 : 10;
-  const calibrated = Math.abs(wavelength - targetFreq) <= tol;
+    // Place items in well-separated grid-jittered slots inside the circular lens
+    const slots: Array<{ x: number; y: number }> = [
+      { x: 30, y: 28 },
+      { x: 52, y: 22 },
+      { x: 72, y: 31 },
+      { x: 24, y: 51 },
+      { x: 49, y: 49 },
+      { x: 74, y: 53 },
+      { x: 32, y: 74 },
+      { x: 55, y: 76 },
+      { x: 69, y: 69 },
+      { x: 42, y: 36 },
+    ];
+    for (let i = slots.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [slots[i], slots[j]] = [slots[j], slots[i]];
+    }
 
-  const pickInstrument = (id: LabInstrumentId) => {
-    if (paused) return;
-    if (id === activeCase.correctInstrument) {
+    const items: SlideInclusion[] = slots.slice(0, totalCount).map((pos, idx) => ({
+      id: `inc-${idx}`,
+      xPct: pos.x + (rng() - 0.5) * 6,
+      yPct: pos.y + (rng() - 0.5) * 6,
+      isTarget: idx < 3,
+      found: false,
+      rotation: Math.round(rng() * 35),
+    }));
+
+    return { specimen, targetFocus, initialFocus, items };
+  }, [seed, difficulty]);
+
+  const [focus, setFocus] = useState(setup.initialFocus);
+  const [phase, setPhase] = useState<'focus' | 'hunt'>('focus');
+  const [items, setItems] = useState<SlideInclusion[]>(setup.items);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'warning' | 'info'; text: string } | null>(null);
+
+  const sharpnessPct = Math.max(0, Math.round(100 - Math.abs(focus - setup.targetFocus) * 2.4));
+  const blurPx = phase === 'hunt' ? 0 : Math.max(0, Number(((100 - sharpnessPct) * 0.1).toFixed(1)));
+  const foundCount = items.filter((i) => i.isTarget && i.found).length;
+
+  const handleLockFocus = () => {
+    if (paused || phase !== 'focus') return;
+    if (sharpnessPct >= 88) {
       soundEngine.playActionSuccess();
-      setFeedbackErr(false);
-      setStep(2);
+      setPhase('hunt');
+      setFeedback({ tone: 'success', text: t(lang, 'mg.res.phaseHunt') });
     } else {
       soundEngine.playAlert();
-      setFeedbackErr(true);
-      onPenaltySeconds(2);
+      setFeedback({ tone: 'warning', text: t(lang, 'mg.res.focusHint') });
     }
   };
 
-  const lockCalibration = () => {
-    if (paused) return;
-    if (calibrated) {
+  const handleClickInclusion = (item: SlideInclusion) => {
+    if (paused || phase !== 'hunt' || item.found) return;
+    if (item.isTarget) {
       soundEngine.playActionSuccess();
-      setFeedbackErr(false);
-      setStep(3);
+      const nextItems = items.map((x) => (x.id === item.id ? { ...x, found: true } : x));
+      setItems(nextItems);
+      const nextFound = nextItems.filter((x) => x.isTarget && x.found).length;
+      if (nextFound >= 3) {
+        onWin(Math.min(100, Math.round(74 + timeLeft * 0.7)));
+      }
     } else {
       soundEngine.playAlert();
-      setFeedbackErr(true);
+      setFeedback({ tone: 'warning', text: t(lang, 'mg.res.wrongSample') });
       onPenaltySeconds(2);
-    }
-  };
-
-  const pickConclusion = (origIdx: number) => {
-    if (paused) return;
-    if (origIdx === correctOptionId) {
-      soundEngine.playActionSuccess();
-      onWin(Math.min(100, Math.round(70 + timeLeft * 0.9)));
-    } else {
-      soundEngine.playAlert();
-      setFeedbackErr(true);
-      onPenaltySeconds(3);
     }
   };
 
   return (
-    <div className="space-y-3">
-      <div className="bg-[#0c162d] border border-purple-500/40 rounded-xl p-3">
-        <div className="flex items-center gap-2 text-xs font-extrabold text-purple-300">
-          <FlaskConical className="w-4 h-4" />
-          {t(lang, activeCase.sampleTitleKey)}
-        </div>
-        <p className="text-xs text-slate-200 mt-1">{t(lang, activeCase.clueKey)}</p>
-      </div>
-
-      {/* Step 1: Instrument */}
-      <div className={`rounded-xl border p-3 ${step === 1 ? 'bg-[#0c162d] border-cyan-400/50' : 'bg-[#091224] border-slate-800 opacity-75'}`}>
-        <div className="flex items-center justify-between text-xs font-bold text-cyan-300 mb-2">
-          <span>{t(lang, 'mg.res.step1')}</span>
-          {step > 1 && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-        </div>
-        {step === 1 && (
-          <div className="grid grid-cols-2 gap-2">
-            {shuffledInstruments.map((inst) => (
-              <button
-                key={inst.id}
-                type="button"
-                onClick={() => pickInstrument(inst.id)}
-                className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-cyan-400 text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
-              >
-                {inst.icon}
-                <span>{t(lang, `mg.res.inst.${inst.id}`)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Step 2: Wavelength Calibration */}
-      {step >= 2 && (
-        <div className={`rounded-xl border p-3 ${step === 2 ? 'bg-[#0c162d] border-cyan-400/50' : 'bg-[#091224] border-slate-800 opacity-75'}`}>
-          <div className="flex items-center justify-between text-xs font-bold text-cyan-300 mb-2">
-            <span>{t(lang, 'mg.res.step2')}</span>
-            {step > 2 && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-          </div>
-          {step === 2 && (
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs text-slate-200 tabular-nums">
-                <span>
-                  {wavelength} nm ({t(lang, 'mg.comms_tune.target')}: ~{targetFreq} nm)
-                </span>
-                <span className={calibrated ? 'text-emerald-300 font-bold' : 'text-amber-300'}>
-                  {calibrated ? 'OK' : '...'}
-                </span>
-              </div>
+    <MiniGameFrame
+      icon={<Microscope className="w-4 h-4 text-cyan-300" />}
+      instruction={t(lang, 'mg.research_lab.desc')}
+      progressPct={phase === 'focus' ? sharpnessPct * 0.4 : 40 + (foundCount / 3) * 60}
+      progressTone={phase === 'focus' ? 'cyan' : 'emerald'}
+      stats={[
+        { label: t(lang, 'mg.res.sharpness'), value: `${phase === 'hunt' ? 100 : sharpnessPct}%`, tone: sharpnessPct >= 88 ? 'emerald' : 'amber' },
+        { label: t(lang, 'mg.res.found'), value: `${foundCount}/3`, tone: 'cyan' },
+      ]}
+      feedback={feedback}
+      footer={
+        phase === 'focus' ? (
+          <div className="bg-[#0b152a] border border-slate-800 rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+              <span>{t(lang, 'mg.res.phaseFocus')}</span>
+              <span className="font-mono tabular-nums text-cyan-300">{focus} mm</span>
+            </div>
+            <div className="flex items-center gap-2">
               <input
                 type="range"
-                min={10}
-                max={90}
-                value={wavelength}
-                onChange={(e) => setWavelength(Number(e.target.value))}
-                className="w-full accent-purple-400 cursor-pointer"
+                min={5}
+                max={95}
+                value={focus}
+                onChange={(e) => setFocus(Number(e.target.value))}
+                className="flex-1 accent-cyan-400 cursor-pointer"
               />
               <button
                 type="button"
-                onClick={lockCalibration}
-                className={`w-full py-2 rounded-xl font-extrabold text-xs cursor-pointer ${
-                  calibrated ? 'bg-emerald-400 text-slate-950' : 'bg-slate-800 text-slate-300'
+                onClick={handleLockFocus}
+                className={`px-3.5 py-2 rounded-lg text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                  sharpnessPct >= 88
+                    ? 'bg-emerald-400 hover:bg-emerald-300 text-slate-950'
+                    : 'bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200'
                 }`}
               >
-                {lang === 'es' ? 'Calibrar Sensor' : 'Calibrate Sensor'}
+                <Eye className="w-3.5 h-3.5" />
+                {t(lang, 'mg.res.lockFocus')}
               </button>
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        ) : (
+          <div className="text-[11px] font-semibold text-cyan-200 text-center flex items-center justify-center gap-1.5">
+            <Search className="w-3.5 h-3.5" />
+            <span>{t(lang, 'mg.res.phaseHunt')}</span>
+          </div>
+        )
+      }
+    >
+      <div className="grid sm:grid-cols-[1.25fr_1fr] gap-3 items-center">
+        {/* Circular Microscope Viewport */}
+        <div className="flex items-center justify-center">
+          <div className="relative w-56 h-56 rounded-full bg-gradient-to-br from-[#071126] via-[#0a1834] to-[#040914] border-2 border-cyan-500/45 overflow-hidden shadow-inner">
+            {/* Crosshair Reticle */}
+            <div className="absolute inset-x-0 top-1/2 border-t border-cyan-500/20 pointer-events-none" />
+            <div className="absolute inset-y-0 left-1/2 border-l border-cyan-500/20 pointer-events-none" />
+            <div className="absolute inset-6 rounded-full border border-cyan-500/15 pointer-events-none" />
 
-      {/* Step 3: Interpret Result */}
-      {step === 3 && (
-        <div className="rounded-xl border border-emerald-400/50 bg-[#0c162d] p-3 space-y-2">
-          <div className="text-xs font-bold text-emerald-300">{t(lang, 'mg.res.step3')}</div>
-          <p className="text-xs font-semibold text-white">{t(lang, activeCase.questionKey)}</p>
-          <div className="flex flex-col gap-1.5">
-            {shuffledOptions.map((opt) => (
-              <button
-                key={opt.key}
-                type="button"
-                onClick={() => pickConclusion(opt.origIdx)}
-                className="text-left px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-emerald-400 text-xs font-semibold text-slate-200 cursor-pointer"
-              >
-                {t(lang, opt.key)}
-              </button>
-            ))}
+            {/* Blurred / Focused Slide Layer */}
+            <div
+              className="absolute inset-0 transition-[filter] duration-75"
+              style={{ filter: `blur(${blurPx}px)` }}
+            >
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={phase !== 'hunt' || item.found}
+                  onClick={() => handleClickInclusion(item)}
+                  style={{
+                    left: `${item.xPct}%`,
+                    top: `${item.yPct}%`,
+                    transform: `translate(-50%, -50%) rotate(${item.rotation}deg)`,
+                  }}
+                  className={`absolute w-10 h-10 rounded-full flex items-center justify-center transition-transform ${
+                    phase !== 'hunt'
+                      ? 'cursor-default'
+                      : item.found
+                        ? 'opacity-35 scale-90 cursor-default'
+                        : 'hover:scale-110 cursor-pointer'
+                  }`}
+                >
+                  {item.found ? (
+                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                  ) : (
+                    renderSpecimenGlyph(
+                      setup.specimen.shape,
+                      item.isTarget,
+                      setup.specimen.accentHex,
+                      setup.specimen.decoyHex,
+                      34,
+                    )
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      )}
 
-      {feedbackErr && (
-        <div className="text-[11px] font-bold text-amber-300 text-center">(-2s / -3s)</div>
-      )}
-    </div>
+        {/* Lab Target Reference Guide */}
+        <div className="bg-[#0b152a] border border-slate-800 rounded-xl p-3 space-y-2">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
+            {t(lang, 'mg.res.guideLabel')}
+          </div>
+          <div className="text-xs font-extrabold text-white">{t(lang, setup.specimen.titleKey)}</div>
+
+          <div className="flex items-center gap-2.5 bg-[#060d1e] border border-slate-800 rounded-lg p-2.5">
+            <div className="shrink-0">
+              {renderSpecimenGlyph(
+                setup.specimen.shape,
+                true,
+                setup.specimen.accentHex,
+                setup.specimen.decoyHex,
+                42,
+              )}
+            </div>
+            <div>
+              <div className="text-xs font-bold text-cyan-200">{t(lang, setup.specimen.targetNameKey)}</div>
+              <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{t(lang, setup.specimen.clueKey)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </MiniGameFrame>
   );
 };

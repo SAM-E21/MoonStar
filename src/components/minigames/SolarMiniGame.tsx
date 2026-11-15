@@ -1,9 +1,18 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CloudFog, Sparkles, Sun, Zap } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Cloud, Sun, Zap } from 'lucide-react';
 import { soundEngine } from '../../audio/soundEngine';
-import { computeSolarCapture, createPrng } from '../../engine/minigames';
+import { createPrng } from '../../engine/minigames';
 import { t } from '../../i18n/translations';
+import { MiniGameFrame } from './MiniGameFrame';
 import type { MiniGameComponentProps } from './types';
+
+interface FallingOrb {
+  id: number;
+  kind: 'ray' | 'surge' | 'dust';
+  xPct: number; // 8 - 92
+  yPct: number; // 0 - 100
+  speed: number; // pct per second
+}
 
 export const SolarMiniGame: React.FC<MiniGameComponentProps> = ({
   lang,
@@ -11,212 +20,219 @@ export const SolarMiniGame: React.FC<MiniGameComponentProps> = ({
   paused,
   timeLeft,
   seed,
+  onPenaltySeconds,
   onWin,
 }) => {
-  const initial = useMemo(() => {
-    const rng = createPrng(seed + 11);
-    const sunStart = Math.round((rng() - 0.5) * 90);
-    const panelStart = Math.round((rng() - 0.5) * 70);
-    const shadowStart = Math.round((rng() - 0.5) * 80);
-    const dustStart = Math.round(45 + rng() * 35);
-    const phaseSun = rng() * Math.PI * 2;
-    const phaseShadow = rng() * Math.PI * 2;
-    return { sunStart, panelStart, shadowStart, dustStart, phaseSun, phaseShadow };
-  }, [seed]);
+  const goalEnergy = difficulty === 'easy' ? 10 : difficulty === 'normal' ? 14 : 18;
+  const rngRef = useRef(createPrng(seed + 29));
+  const nextIdRef = useRef(1);
+  const wonRef = useRef(false);
+  const arenaRef = useRef<HTMLDivElement | null>(null);
 
-  const targetWh = difficulty === 'easy' ? 180 : difficulty === 'normal' ? 240 : 300;
-  const [panelAngle, setPanelAngle] = useState(initial.panelStart);
-  const [sunAngle, setSunAngle] = useState(initial.sunStart);
-  const [shadowCenter, setShadowCenter] = useState(initial.shadowStart);
-  const [dustCleanPct, setDustCleanPct] = useState(initial.dustStart);
-  const [harvestedWh, setHarvestedWh] = useState(0);
+  const [panelX, setPanelX] = useState(50);
+  const panelXRef = useRef(50);
+  const [orbs, setOrbs] = useState<FallingOrb[]>(() => {
+    const rng = createPrng(seed + 7);
+    return [
+      { id: 9001, kind: 'ray', xPct: 25 + rng() * 50, yPct: 14, speed: 34 },
+      { id: 9002, kind: 'dust', xPct: 18 + rng() * 64, yPct: 36, speed: 38 },
+    ];
+  });
+  const [captured, setCaptured] = useState(0);
+  const capturedRef = useRef(0);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'warning' | 'info'; text: string } | null>(null);
 
-  const shadowHalfWidth = difficulty === 'hard' ? 15 : 12;
-  const capture = computeSolarCapture(panelAngle, sunAngle, shadowCenter, shadowHalfWidth, dustCleanPct);
+  const movePanel = useCallback(
+    (nextX: number) => {
+      if (paused || wonRef.current) return;
+      const clamped = Math.max(10, Math.min(90, nextX));
+      panelXRef.current = clamped;
+      setPanelX(clamped);
+    },
+    [paused],
+  );
 
+  // Keyboard navigation
   useEffect(() => {
-    if (paused) return;
-    const tick = window.setInterval(() => {
-      const speedMult = difficulty === 'hard' ? 1.45 : difficulty === 'normal' ? 1.1 : 0.85;
-      const tSec = Date.now() / 1000;
-      setSunAngle(Math.round(Math.sin(tSec * 0.65 * speedMult + initial.phaseSun) * 58));
-      setShadowCenter(Math.round(Math.cos(tSec * 0.45 * speedMult + initial.phaseShadow) * 48));
-      setDustCleanPct((prev) => Math.max(25, prev - (difficulty === 'hard' ? 2.5 : 1.5)));
-    }, 350);
-    return () => window.clearInterval(tick);
-  }, [paused, difficulty, initial.phaseSun, initial.phaseShadow]);
+    const onKey = (e: KeyboardEvent) => {
+      if (paused || wonRef.current) return;
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        movePanel(panelXRef.current - 9);
+      } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
+        movePanel(panelXRef.current + 9);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paused, movePanel]);
 
+  // Physics + Spawner loop
   useEffect(() => {
-    if (paused) return;
-    const harvestTimer = window.setInterval(() => {
-      setHarvestedWh((prev) => {
-        const next = Math.min(targetWh, prev + capture.wattsPerSec * 0.35);
-        if (next >= targetWh) {
-          soundEngine.playActionSuccess();
-          onWin(Math.min(100, Math.round(70 + timeLeft * 1.2)));
+    if (paused || wonRef.current) return;
+
+    const dtSec = 0.05;
+    const speedBase = difficulty === 'easy' ? 32 : difficulty === 'normal' ? 40 : 48;
+    const spawnChance = difficulty === 'easy' ? 0.1 : difficulty === 'normal' ? 0.13 : 0.16;
+
+    const id = window.setInterval(() => {
+      let hitEvent: 'ray' | 'surge' | 'dust' | null = null;
+
+      setOrbs((prev) => {
+        const surviving: FallingOrb[] = [];
+        const px = panelXRef.current;
+
+        for (const orb of prev) {
+          const ny = orb.yPct + orb.speed * dtSec;
+          const inCatchY = ny >= 76 && ny <= 93;
+          const inCatchX = Math.abs(orb.xPct - px) <= 13;
+
+          if (inCatchY && inCatchX) {
+            hitEvent = orb.kind;
+            continue;
+          }
+          if (ny < 103) {
+            surviving.push({ ...orb, yPct: ny });
+          }
         }
-        return next;
+
+        if (surviving.length < 8 && (surviving.length < 2 || rngRef.current() < spawnChance)) {
+          const roll = rngRef.current();
+          const kind: FallingOrb['kind'] =
+            roll < 0.34 ? 'dust' : roll < 0.85 ? 'ray' : 'surge';
+          surviving.push({
+            id: nextIdRef.current++,
+            kind,
+            xPct: 10 + rngRef.current() * 80,
+            yPct: -4,
+            speed: speedBase + rngRef.current() * 14,
+          });
+        }
+
+        return surviving;
       });
-    }, 350);
-    return () => window.clearInterval(harvestTimer);
-  }, [paused, capture.wattsPerSec, targetWh, timeLeft, onWin]);
 
-  const brushDust = () => {
-    if (paused) return;
-    soundEngine.playClick();
-    setDustCleanPct((prev) => Math.min(100, prev + 28));
-  };
+      if (hitEvent === 'ray' || hitEvent === 'surge') {
+        soundEngine.playActionSuccess();
+        const gain = hitEvent === 'surge' ? 2 : 1;
+        const nextTotal = Math.min(goalEnergy, capturedRef.current + gain);
+        capturedRef.current = nextTotal;
+        setCaptured(nextTotal);
+        setFeedback({
+          tone: 'success',
+          text: t(lang, hitEvent === 'surge' ? 'mg.solar.hitSurge' : 'mg.solar.hitRay'),
+        });
+        if (nextTotal >= goalEnergy && !wonRef.current) {
+          wonRef.current = true;
+          onWin(Math.min(100, Math.round(70 + timeLeft * 0.9)));
+        }
+      } else if (hitEvent === 'dust') {
+        soundEngine.playAlert();
+        const nextTotal = Math.max(0, capturedRef.current - 1);
+        capturedRef.current = nextTotal;
+        setCaptured(nextTotal);
+        setFeedback({ tone: 'warning', text: t(lang, 'mg.solar.hitDust') });
+        onPenaltySeconds(2);
+      }
+    }, 50);
 
-  // Convert angle (-70..70) to SVG arc coordinates
-  const toPoint = (deg: number, r: number) => {
-    const rad = ((deg - 90) * Math.PI) / 180;
-    return { x: 160 + r * Math.cos(rad), y: 112 + r * Math.sin(rad) };
+    return () => window.clearInterval(id);
+  }, [paused, difficulty, goalEnergy, lang, onPenaltySeconds, onWin, timeLeft]);
+
+  const handlePointerSteer = (clientX: number) => {
+    const el = arenaRef.current;
+    if (!el || paused || wonRef.current) return;
+    const rect = el.getBoundingClientRect();
+    const pct = ((clientX - rect.left) / Math.max(1, rect.width)) * 100;
+    movePanel(pct);
   };
-  const sunPt = toPoint(sunAngle, 86);
-  const shadowPt = toPoint(shadowCenter, 86);
 
   return (
-    <div className="space-y-3">
-      {/* Live Sun & Crater Shadow Alignment Stage */}
-      <div className="bg-[#070f22] border border-slate-700 rounded-xl p-3">
-        <svg viewBox="0 0 320 135" className="w-full h-36 select-none" aria-label={t(lang, 'mg.solar_align.title')}>
-          <defs>
-            <linearGradient id="skyArcGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#0f172a" />
-              <stop offset="100%" stopColor="#081022" />
-            </linearGradient>
-          </defs>
-          <rect width="320" height="135" rx="10" fill="url(#skyArcGrad)" />
-          {/* Polar Horizon Ground */}
-          <path d="M 10 112 Q 160 104 310 112 L 310 135 L 10 135 Z" fill="#1e293b" />
-          {/* Sky arc guide */}
-          <path d="M 65 112 A 95 95 0 0 1 255 112" fill="none" stroke="#334155" strokeDasharray="4 4" strokeWidth="1.5" />
-
-          {/* Crater Shadow Cone */}
-          <line
-            x1="160"
-            y1="112"
-            x2={shadowPt.x}
-            y2={shadowPt.y}
-            stroke="rgba(15, 23, 42, 0.9)"
-            strokeWidth="22"
-            strokeLinecap="round"
-          />
-          <circle cx={shadowPt.x} cy={shadowPt.y} r="13" fill="#0f172a" stroke="#475569" strokeWidth="1.5" />
-          <text x={shadowPt.x} y={shadowPt.y + 3} textAnchor="middle" fill="#94a3b8" fontSize="8" fontWeight="bold">
-            SHADE
-          </text>
-
-          {/* Active Sun Ray */}
-          <line
-            x1={sunPt.x}
-            y1={sunPt.y}
-            x2="160"
-            y2="112"
-            stroke={capture.inShadow ? '#64748b' : '#fde047'}
-            strokeWidth={capture.inShadow ? '1.5' : '3'}
-            strokeDasharray={capture.inShadow ? '3 3' : undefined}
-          />
-          <circle cx={sunPt.x} cy={sunPt.y} r="12" fill="#facc15" />
-          <circle cx={sunPt.x} cy={sunPt.y} r="17" fill="#facc15" opacity="0.22" />
-
-          {/* Tilting Solar Array */}
-          <g transform={`translate(160, 108) rotate(${panelAngle})`}>
-            <rect x="-44" y="-8" width="88" height="10" rx="3" fill="#0284c7" stroke="#38bdf8" strokeWidth="1.5" />
-            <line x1="-22" y1="-8" x2="-22" y2="2" stroke="#bae6fd" strokeWidth="1" opacity="0.5" />
-            <line x1="0" y1="-8" x2="0" y2="2" stroke="#bae6fd" strokeWidth="1" opacity="0.5" />
-            <line x1="22" y1="-8" x2="22" y2="2" stroke="#bae6fd" strokeWidth="1" opacity="0.5" />
-            {dustCleanPct < 80 && (
-              <rect
-                x="-44"
-                y="-8"
-                width="88"
-                height="10"
-                rx="3"
-                fill="#d97706"
-                opacity={(100 - dustCleanPct) / 140}
-              />
-            )}
-          </g>
-          <rect x="157" y="108" width="6" height="16" fill="#94a3b8" />
-        </svg>
-
-        <div className="grid grid-cols-3 gap-2 text-center text-[11px] pt-1">
-          <div className="bg-[#0c162d] rounded-lg p-1.5 border border-slate-800">
-            <div className="text-slate-400">{t(lang, 'mg.solar_align.sun')}</div>
-            <div className="font-extrabold text-amber-300 tabular-nums">{sunAngle}°</div>
-          </div>
-          <div className="bg-[#0c162d] rounded-lg p-1.5 border border-slate-800">
-            <div className="text-slate-400">{t(lang, 'mg.solar_align.shadow')}</div>
-            <div className={`font-extrabold tabular-nums ${capture.inShadow ? 'text-red-400' : 'text-slate-300'}`}>
-              {shadowCenter}°
-            </div>
-          </div>
-          <div className="bg-[#0c162d] rounded-lg p-1.5 border border-slate-800">
-            <div className="text-slate-400">{t(lang, 'mg.solar_align.output')}</div>
-            <div className="font-extrabold text-cyan-300 tabular-nums">{capture.wattsPerSec} W/s</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Panel Tilt Control + Dust Brush */}
-      <div className="bg-[#0c162d] border border-slate-800 rounded-xl p-3 space-y-3">
-        <div>
-          <div className="flex justify-between text-xs text-slate-200 mb-1">
-            <span className="flex items-center gap-1.5 font-bold">
-              <Sun className="w-4 h-4 text-yellow-300" />
-              {t(lang, 'mg.solar_align.tilt')}
-            </span>
-            <span className="font-black text-cyan-300 tabular-nums">
-              {panelAngle}° · {capture.efficiencyPct}% eff
-            </span>
-          </div>
-          <input
-            type="range"
-            min={-65}
-            max={65}
-            value={panelAngle}
-            onChange={(e) => setPanelAngle(Number(e.target.value))}
-            className="w-full accent-yellow-400 cursor-pointer"
-          />
-        </div>
-
+    <MiniGameFrame
+      icon={<Sun className="w-4 h-4 text-amber-300" />}
+      instruction={t(lang, 'mg.solar_align.desc')}
+      progressPct={(captured / goalEnergy) * 100}
+      progressTone="amber"
+      stats={[
+        { label: t(lang, 'mg.solar.captured'), value: `${captured}/${goalEnergy}`, tone: 'amber' },
+      ]}
+      feedback={feedback}
+      footer={
         <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={brushDust}
-            className="px-3 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-          >
-            <CloudFog className="w-4 h-4" />
-            {t(lang, 'mg.solar_align.dustBtn')} ({Math.round(dustCleanPct)}% {t(lang, 'mg.solar_align.clean')})
-          </button>
-
-          <div className="flex-1">
-            <div className="flex justify-between text-[11px] font-bold text-slate-200 mb-1">
-              <span className="flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-yellow-300" />
-                {t(lang, 'mg.solar_align.energyTarget')}
-              </span>
-              <span className="tabular-nums text-emerald-300">
-                {Math.round(harvestedWh)}/{targetWh} Wh
-              </span>
-            </div>
-            <div className="h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
-              <div
-                className="h-full bg-emerald-400 transition-all duration-200"
-                style={{ width: `${Math.min(100, (harvestedWh / targetWh) * 100)}%` }}
-              />
-            </div>
+          <span className="text-[11px] text-slate-400 font-semibold">{t(lang, 'mg.solar.moveHint')}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => movePanel(panelX - 12)}
+              aria-label="Left"
+              className="px-4 py-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => movePanel(panelX + 12)}
+              aria-label="Right"
+              className="px-4 py-2 rounded-lg bg-[#0b152a] hover:bg-slate-800 border border-slate-700 text-white cursor-pointer"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
-      </div>
+      }
+    >
+      {/* Falling Sunbeams & Dust Arena */}
+      <div
+        ref={arenaRef}
+        onPointerMove={(e) => {
+          if (e.buttons > 0 || e.pointerType === 'mouse') handlePointerSteer(e.clientX);
+        }}
+        onPointerDown={(e) => handlePointerSteer(e.clientX)}
+        className="relative h-64 rounded-lg bg-gradient-to-b from-[#040814] via-[#09132b] to-[#111c36] border border-slate-800/90 overflow-hidden select-none touch-none cursor-ew-resize"
+      >
+        {/* Subtle Horizon Rim */}
+        <div className="absolute inset-x-0 bottom-0 h-8 bg-[#0b1326] border-t border-slate-700/60" />
 
-      {capture.inShadow && (
-        <div className="text-[11px] font-bold text-amber-300 flex items-center justify-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5" />
-          {t(lang, 'mg.solar_align.shadow')}!
+        {/* Falling Sunbeams & Dust Orbs */}
+        {orbs.map((orb) => (
+          <div
+            key={orb.id}
+            style={{
+              left: `${orb.xPct}%`,
+              top: `${orb.yPct}%`,
+              transform: 'translate(-50%, -50%)',
+            }}
+            className={`absolute w-9 h-9 rounded-full border flex items-center justify-center pointer-events-none ${
+              orb.kind === 'ray'
+                ? 'bg-amber-400/25 border-amber-300 text-amber-300'
+                : orb.kind === 'surge'
+                  ? 'bg-cyan-400/25 border-cyan-300 text-cyan-200'
+                  : 'bg-slate-900/95 border-rose-500/70 text-rose-300'
+            }`}
+          >
+            {orb.kind === 'ray' ? (
+              <Sun className="w-5 h-5" />
+            ) : orb.kind === 'surge' ? (
+              <Zap className="w-5 h-5" />
+            ) : (
+              <Cloud className="w-5 h-5" />
+            )}
+          </div>
+        ))}
+
+        {/* Player Solar Panel Catcher */}
+        <div
+          style={{
+            left: `${panelX}%`,
+            bottom: '10px',
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute w-24 h-8 rounded-lg bg-cyan-500/25 border-2 border-cyan-300 flex items-center justify-center gap-1.5 shadow-md pointer-events-none"
+        >
+          <div className="w-16 h-3 rounded-sm bg-gradient-to-r from-cyan-400/80 via-sky-300/90 to-cyan-400/80 border border-cyan-200/70" />
         </div>
-      )}
-    </div>
+      </div>
+    </MiniGameFrame>
   );
 };

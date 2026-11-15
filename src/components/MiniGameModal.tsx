@@ -96,19 +96,18 @@ export const MiniGameModal: React.FC<MiniGameModalProps> = ({ lang, kind, onComp
 
   return (
     <div className="fixed inset-0 z-40 bg-[#040813]/85 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl bg-[#081022] border border-cyan-500/45 rounded-2xl p-5 md:p-6 shadow-2xl my-auto">
+      <div className="w-full max-w-2xl bg-[#081022] border border-cyan-500/45 rounded-2xl p-5 md:p-6 shadow-2xl my-auto">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3 mb-3">
           <div>
             <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-amber-300">
               <span>{t(lang, 'mg.badge')}</span>
               <span>·</span>
-              <span className={timeLeft <= 6 ? 'text-red-400 animate-pulse font-black' : 'text-cyan-300 font-black'}>
+              <span className={`font-mono tabular-nums ${timeLeft <= 6 ? 'text-rose-400 font-black' : 'text-cyan-300 font-black'}`}>
                 {timeLeft}s
               </span>
             </div>
             <h2 className="text-lg md:text-xl font-extrabold text-white mt-0.5">{t(lang, `mg.${kind}.title`)}</h2>
-            <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">{t(lang, `mg.${kind}.desc`)}</p>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">

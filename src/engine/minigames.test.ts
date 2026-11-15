@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BUILDING_ORDER } from '../data/missionData';
 import {
+  areAllAstronautsReachable,
   areAllCrystalsReachable,
   BUILDING_TO_MINIGAME,
   computeSolarCapture,
   createWaterPipePuzzle,
   generateHabitatFaults,
   generateRoverMap,
+  generateShelterMaze,
+  MICRO_SPECIMENS,
   rotatePipeAt,
   solvePipeNetwork,
 } from './minigames';
@@ -138,3 +141,20 @@ test('all 9 minigame outcomes update real simulation modules on both victory and
     assert.equal(lostState.miniGamesWon, 0, `Expected miniGamesWon unchanged on fail for ${kind}`);
   }
 });
+
+test('procedural shelter rescue maze guarantees BFS reachability and scales astronaut count by difficulty', () => {
+  const expectedCrew: Record<MiniGameDifficulty, number> = {
+    easy: 2,
+    normal: 3,
+    hard: 4,
+  };
+  for (const diff of ['easy', 'normal', 'hard'] as MiniGameDifficulty[]) {
+    for (let s = 1; s <= 20; s++) {
+      const maze = generateShelterMaze(diff, s * 131 + diff.length);
+      assert.equal(maze.astronauts.length, expectedCrew[diff]);
+      assert.ok(areAllAstronautsReachable(maze), `Shelter maze failed BFS reachability for ${diff} seed ${s}`);
+    }
+  }
+  assert.equal(new Set(MICRO_SPECIMENS.map((sp) => sp.shape)).size, 4);
+});
+

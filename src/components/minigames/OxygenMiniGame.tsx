@@ -1,9 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Wind, Zap } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, CloudOff, Wind } from 'lucide-react';
 import { soundEngine } from '../../audio/soundEngine';
 import { createPrng } from '../../engine/minigames';
 import { t } from '../../i18n/translations';
+import { MiniGameFrame } from './MiniGameFrame';
 import type { MiniGameComponentProps } from './types';
+
+type BubbleKind = 'o2' | 'co2' | 'smoke';
+
+interface RisingBubble {
+  id: number;
+  kind: BubbleKind;
+  xPct: number; // 12 - 88
+  yPct: number; // 100 bottom -> 0 top
+  speed: number; // pct per second
+}
 
 export const OxygenMiniGame: React.FC<MiniGameComponentProps> = ({
   lang,
@@ -11,140 +22,175 @@ export const OxygenMiniGame: React.FC<MiniGameComponentProps> = ({
   paused,
   timeLeft,
   seed,
+  onPenaltySeconds,
   onWin,
 }) => {
-  const initial = useMemo(() => {
-    const rng = createPrng(seed + 31);
-    return {
-      electrolysis: Math.round(30 + rng() * 40),
-      scrubber: Math.round(30 + rng() * 40),
-      o2: Math.round(38 + rng() * 40),
-      co2: Math.round(24 + rng() * 30),
-      phase: rng() * Math.PI * 2,
-    };
-  }, [seed]);
+  const goalO2 = difficulty === 'easy' ? 8 : difficulty === 'normal' ? 11 : 14;
+  const rngRef = useRef(createPrng(seed + 53));
+  const nextIdRef = useRef(1);
+  const wonRef = useRef(false);
 
-  const [electrolysis, setElectrolysis] = useState(initial.electrolysis);
-  const [scrubber, setScrubber] = useState(initial.scrubber);
-  const [o2, setO2] = useState(initial.o2);
-  const [co2, setCo2] = useState(initial.co2);
-  const [stabilityPct, setStabilityPct] = useState(0);
+  const [bubbles, setBubbles] = useState<RisingBubble[]>(() => {
+    const rng = createPrng(seed + 17);
+    return [
+      { id: 8001, kind: 'o2', xPct: 24 + rng() * 52, yPct: 76, speed: 24 },
+      { id: 8002, kind: 'co2', xPct: 20 + rng() * 60, yPct: 54, speed: 22 },
+      { id: 8003, kind: 'o2', xPct: 20 + rng() * 60, yPct: 88, speed: 25 },
+    ];
+  });
 
-  const o2Safe = o2 >= 50 && o2 <= 82;
-  const co2Safe = co2 <= 38;
-  const bothSafe = o2Safe && co2Safe;
+  const [captured, setCaptured] = useState(0);
+  const [purity, setPurity] = useState(100);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'warning' | 'info'; text: string } | null>(null);
 
   useEffect(() => {
-    if (paused) return;
-    const timer = window.setInterval(() => {
-      const surge = difficulty === 'hard' ? 1.55 : difficulty === 'normal' ? 1.15 : 0.85;
-      const pulse = Math.sin(Date.now() / 1600 + initial.phase);
+    if (paused || wonRef.current) return;
 
-      setO2((prev) => {
-        const delta = (electrolysis - 52) * 0.16 - (2.0 + pulse * 1.4) * surge;
-        return Math.max(10, Math.min(99, prev + delta));
-      });
-      setCo2((prev) => {
-        const delta = (3.4 + pulse * 1.2) * surge - (scrubber - 30) * 0.14;
-        return Math.max(5, Math.min(95, prev + delta));
-      });
+    const dtSec = 0.05;
+    const speedBase = difficulty === 'easy' ? 22 : difficulty === 'normal' ? 28 : 34;
+    const spawnChance = difficulty === 'easy' ? 0.11 : difficulty === 'normal' ? 0.14 : 0.17;
 
-      setStabilityPct((prev) => {
-        const gain = bothSafe ? 9 : o2Safe || co2Safe ? 1 : -4;
-        const next = Math.max(0, Math.min(100, prev + gain));
-        if (next >= 100) {
-          soundEngine.playActionSuccess();
-          onWin(Math.min(100, Math.round(70 + timeLeft * 1.1)));
+    const id = window.setInterval(() => {
+      let smokeEscaped = false;
+
+      setBubbles((prev) => {
+        const next: RisingBubble[] = [];
+        for (const b of prev) {
+          const ny = b.yPct - b.speed * dtSec;
+          if (ny <= 4) {
+            if (b.kind === 'smoke') {
+              smokeEscaped = true;
+            }
+            continue;
+          }
+          next.push({ ...b, yPct: ny });
         }
+
+        if (next.length < 8 && (next.length < 3 || rngRef.current() < spawnChance)) {
+          const r = rngRef.current();
+          const kind: BubbleKind = r < 0.56 ? 'o2' : r < 0.8 ? 'co2' : 'smoke';
+          next.push({
+            id: nextIdRef.current++,
+            kind,
+            xPct: 12 + rngRef.current() * 76,
+            yPct: 96,
+            speed: speedBase + rngRef.current() * 10,
+          });
+        }
+
         return next;
       });
-    }, 350);
 
-    return () => window.clearInterval(timer);
-  }, [paused, difficulty, initial.phase, electrolysis, scrubber, bothSafe, o2Safe, co2Safe, timeLeft, onWin]);
+      if (smokeEscaped) {
+        soundEngine.playAlert();
+        setPurity((p) => Math.max(40, p - 8));
+        setFeedback({ tone: 'warning', text: t(lang, 'mg.oxy.smokeEscaped') });
+        onPenaltySeconds(2);
+      }
+    }, 50);
+
+    return () => window.clearInterval(id);
+  }, [paused, difficulty, lang, onPenaltySeconds]);
+
+  const handlePopBubble = (bubble: RisingBubble) => {
+    if (paused || wonRef.current) return;
+    setBubbles((prev) => prev.filter((b) => b.id !== bubble.id));
+
+    if (bubble.kind === 'o2') {
+      soundEngine.playActionSuccess();
+      const nextCount = captured + 1;
+      setCaptured(nextCount);
+      setPurity((p) => Math.min(100, p + 2));
+      setFeedback({ tone: 'success', text: t(lang, 'mg.oxy.goodO2') });
+      if (nextCount >= goalO2) {
+        wonRef.current = true;
+        onWin(Math.min(100, Math.round((70 + timeLeft * 0.7) * (0.8 + purity / 500))));
+      }
+    } else if (bubble.kind === 'smoke') {
+      soundEngine.playClick();
+      setFeedback({ tone: 'success', text: t(lang, 'mg.oxy.goodSmoke') });
+    } else {
+      soundEngine.playAlert();
+      setPurity((p) => Math.max(40, p - 10));
+      setFeedback({ tone: 'warning', text: t(lang, 'mg.oxy.hitCo2') });
+      onPenaltySeconds(2);
+    }
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div
-          className={`rounded-xl border p-3 ${
-            o2Safe ? 'bg-emerald-950/40 border-emerald-400/60' : 'bg-amber-950/45 border-amber-500/60'
-          }`}
-        >
-          <div className="text-[11px] font-bold text-slate-300">{t(lang, 'mg.oxy.o2Level')}</div>
-          <div className="text-2xl font-black text-white tabular-nums mt-0.5">{Math.round(o2)}%</div>
-          <div className="text-[10px] font-bold text-cyan-300">50% – 82% SAFE</div>
-          <div className="h-2.5 bg-slate-900 rounded-full mt-2 overflow-hidden relative">
-            <div className="absolute inset-y-0 left-[50%] w-[32%] bg-emerald-500/30" />
-            <div className="h-full bg-cyan-400 transition-all duration-150" style={{ width: `${o2}%` }} />
-          </div>
-        </div>
-
-        <div
-          className={`rounded-xl border p-3 ${
-            co2Safe ? 'bg-emerald-950/40 border-emerald-400/60' : 'bg-red-950/45 border-red-500/60'
-          }`}
-        >
-          <div className="text-[11px] font-bold text-slate-300">{t(lang, 'mg.oxy.co2Level')}</div>
-          <div className="text-2xl font-black text-white tabular-nums mt-0.5">{Math.round(co2)}%</div>
-          <div className="text-[10px] font-bold text-emerald-300">&lt;= 38% SAFE</div>
-          <div className="h-2.5 bg-slate-900 rounded-full mt-2 overflow-hidden relative">
-            <div className="absolute inset-y-0 left-0 w-[38%] bg-emerald-500/30" />
-            <div className="h-full bg-amber-400 transition-all duration-150" style={{ width: `${co2}%` }} />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-[#0c162d] border border-slate-800 rounded-xl p-3.5 space-y-3">
-        <div>
-          <div className="flex justify-between text-xs font-bold text-slate-200 mb-1">
-            <span className="flex items-center gap-1.5">
-              <Zap className="w-4 h-4 text-cyan-300" />
-              {t(lang, 'mg.oxy.electro')}
-            </span>
-            <span className="text-cyan-300 tabular-nums">{electrolysis}%</span>
-          </div>
-          <input
-            type="range"
-            min={10}
-            max={100}
-            value={electrolysis}
-            onChange={(e) => setElectrolysis(Number(e.target.value))}
-            className="w-full accent-cyan-400 cursor-pointer"
-          />
-        </div>
-
-        <div>
-          <div className="flex justify-between text-xs font-bold text-slate-200 mb-1">
-            <span className="flex items-center gap-1.5">
-              <Wind className="w-4 h-4 text-emerald-300" />
-              {t(lang, 'mg.oxy.scrubber')}
-            </span>
-            <span className="text-emerald-300 tabular-nums">{scrubber}%</span>
-          </div>
-          <input
-            type="range"
-            min={10}
-            max={100}
-            value={scrubber}
-            onChange={(e) => setScrubber(Number(e.target.value))}
-            className="w-full accent-emerald-400 cursor-pointer"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs font-bold">
-          <span className="flex items-center gap-1.5 text-slate-300">
-            <Activity className="w-4 h-4 text-emerald-300" />
-            {t(lang, 'mg.oxy.stability')}
+    <MiniGameFrame
+      icon={<Wind className="w-4 h-4 text-cyan-300" />}
+      instruction={t(lang, 'mg.oxygen_mix.desc')}
+      progressPct={(captured / goalO2) * 100}
+      progressTone="cyan"
+      stats={[
+        { label: t(lang, 'mg.oxy.captured'), value: `${captured}/${goalO2}`, tone: 'cyan' },
+        { label: t(lang, 'mg.oxy.purity'), value: `${purity}%`, tone: purity < 75 ? 'rose' : 'emerald' },
+      ]}
+      feedback={feedback}
+      footer={
+        <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] font-bold text-slate-300">
+          <span className="inline-flex items-center gap-1 text-cyan-300">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {lang === 'es' ? 'O₂: Tocar' : 'O₂: Tap'}
           </span>
-          <span className="text-emerald-300 tabular-nums">{Math.round(stabilityPct)}%</span>
+          <span className="inline-flex items-center gap-1 text-rose-300">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {lang === 'es' ? `${t(lang, 'mg.oxy.smokeTag')}: Tocar` : `${t(lang, 'mg.oxy.smokeTag')}: Tap`}
+          </span>
+          <span className="inline-flex items-center gap-1 text-violet-300">
+            <CloudOff className="w-3.5 h-3.5" />
+            {lang === 'es' ? 'CO₂: Dejar pasar' : 'CO₂: Ignore'}
+          </span>
         </div>
-        <div className="h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
-          <div className="h-full bg-emerald-400 transition-all duration-150" style={{ width: `${stabilityPct}%` }} />
+      }
+    >
+      {/* Electrolysis Glass Column */}
+      <div className="relative h-64 rounded-lg bg-gradient-to-t from-[#07152e] via-[#091a38] to-[#0b2349] border border-cyan-500/30 overflow-hidden select-none">
+        {/* Top Intake Duct */}
+        <div className="absolute inset-x-0 top-0 h-5 bg-cyan-950/80 border-b border-cyan-500/40 flex items-center justify-center text-[10px] font-mono font-bold text-cyan-300 tracking-wider">
+          O2 HABITAT DUCT
+        </div>
+
+        {/* Rising Bubbles */}
+        {bubbles.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            onClick={() => handlePopBubble(b)}
+            style={{
+              left: `${b.xPct}%`,
+              top: `${b.yPct}%`,
+              transform: 'translate(-50%, -50%)',
+            }}
+            className={`absolute w-12 h-12 rounded-full border-2 font-mono font-black text-[11px] flex flex-col items-center justify-center shadow-lg cursor-pointer transition-transform active:scale-90 ${
+              b.kind === 'o2'
+                ? 'bg-cyan-400/25 hover:bg-cyan-400/40 border-cyan-300 text-cyan-100'
+                : b.kind === 'co2'
+                  ? 'bg-violet-500/25 hover:bg-violet-500/35 border-violet-400 text-violet-200'
+                  : 'bg-rose-500/30 hover:bg-rose-500/50 border-rose-400 text-rose-100'
+            }`}
+          >
+            {b.kind === 'smoke' ? (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span className="text-[9px]">{t(lang, 'mg.oxy.smokeTag')}</span>
+              </>
+            ) : b.kind === 'o2' ? (
+              <span>O₂</span>
+            ) : (
+              <span>CO₂</span>
+            )}
+          </button>
+        ))}
+
+        {/* Bottom Electrodes */}
+        <div className="absolute inset-x-0 bottom-0 h-4 bg-[#071022] border-t border-slate-700 flex items-center justify-around">
+          {[0, 1, 2, 3].map((i) => (
+            <span key={i} className="w-10 h-1.5 rounded-full bg-cyan-500/50" />
+          ))}
         </div>
       </div>
-    </div>
+    </MiniGameFrame>
   );
 };

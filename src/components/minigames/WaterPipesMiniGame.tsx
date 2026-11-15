@@ -9,6 +9,7 @@ import {
   type PipeCell,
 } from '../../engine/minigames';
 import { t } from '../../i18n/translations';
+import { MiniGameFrame } from './MiniGameFrame';
 import type { MiniGameComponentProps } from './types';
 
 const renderPipeSvg = (cell: PipeCell, lit: boolean) => {
@@ -53,27 +54,52 @@ export const WaterPipesMiniGame: React.FC<MiniGameComponentProps> = ({
     }
   };
 
+  const progressPct = flow.tankReached ? 100 : flow.filterReached ? 60 : Math.min(40, flow.visitedKeys.length * 6);
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 bg-[#0c162d] border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold">
-        <span className="flex items-center gap-1.5 text-cyan-300">
-          <Droplet className="w-4 h-4" />
-          {t(lang, 'mg.water.intake')} →
-          <span className={flow.filterReached ? 'text-emerald-300' : 'text-amber-300'}>
+    <MiniGameFrame
+      icon={<Droplet className="w-4 h-4 text-cyan-300" />}
+      instruction={t(lang, 'mg.water_pipes.desc')}
+      progressPct={progressPct}
+      progressTone={flow.tankReached ? 'emerald' : 'cyan'}
+      stats={[
+        {
+          label: t(lang, 'mg.water.filter'),
+          value: flow.filterReached ? 'OK' : '—',
+          tone: flow.filterReached ? 'emerald' : 'amber',
+        },
+        {
+          label: t(lang, 'mg.water.tank'),
+          value: flow.tankReached ? 'OK' : '—',
+          tone: flow.tankReached ? 'emerald' : 'slate',
+        },
+      ]}
+      feedback={{
+        tone: flow.filterReached ? 'success' : 'info',
+        text: t(lang, 'mg.water.mustFilter'),
+      }}
+      footer={
+        <div className="flex items-center justify-center gap-4 text-[11px] font-bold text-slate-300">
+          <span className="inline-flex items-center gap-1 text-cyan-300">
+            <Droplet className="w-3.5 h-3.5" />
+            {t(lang, 'mg.water.intake')}
+          </span>
+          <span className="inline-flex items-center gap-1 text-amber-300">
+            <Filter className="w-3.5 h-3.5" />
             {t(lang, 'mg.water.filter')}
           </span>
-          →
-          <span className={flow.tankReached ? 'text-emerald-300' : 'text-slate-300'}>
+          <span className="inline-flex items-center gap-1 text-emerald-300">
+            <CheckCircle2 className="w-3.5 h-3.5" />
             {t(lang, 'mg.water.tank')}
           </span>
-        </span>
-        <span className="text-[11px] text-slate-400 flex items-center gap-1">
-          <RotateCw className="w-3.5 h-3.5" />
-          Click
-        </span>
-      </div>
-
-      <div className="grid grid-cols-5 gap-1.5 bg-[#070f22] p-3 rounded-xl border border-slate-800">
+          <span className="inline-flex items-center gap-1 text-slate-400">
+            <RotateCw className="w-3.5 h-3.5" />
+            {lang === 'es' ? 'Girar' : 'Rotate'}
+          </span>
+        </div>
+      }
+    >
+      <div className="grid grid-cols-5 gap-1.5">
         {network.cells.flatMap((row) =>
           row.map((cell) => {
             const key = `${cell.x},${cell.y}`;
@@ -103,26 +129,20 @@ export const WaterPipesMiniGame: React.FC<MiniGameComponentProps> = ({
                           ? 'bg-cyan-500/25 border-cyan-400'
                           : lit
                             ? 'bg-sky-900/45 border-cyan-400 cursor-pointer'
-                            : 'bg-[#0c162d] hover:bg-slate-800 border-slate-700 cursor-pointer'
+                            : 'bg-[#0b152a] hover:bg-slate-800 border-slate-800 cursor-pointer'
                 }`}
               >
                 {renderPipeSvg(cell, lit)}
                 {isIntake && (
                   <span className="absolute top-0.5 left-1 text-[9px] font-black text-cyan-200">IN</span>
                 )}
-                {isFilter && (
-                  <Filter className="absolute top-0.5 right-0.5 w-3 h-3 text-amber-300" />
-                )}
-                {isTank && (
-                  <CheckCircle2 className="absolute top-0.5 right-0.5 w-3 h-3 text-emerald-300" />
-                )}
+                {isFilter && <Filter className="absolute top-0.5 right-0.5 w-3 h-3 text-amber-300" />}
+                {isTank && <CheckCircle2 className="absolute top-0.5 right-0.5 w-3 h-3 text-emerald-300" />}
               </button>
             );
           }),
         )}
       </div>
-
-      <p className="text-[11px] text-center text-amber-300 font-semibold">{t(lang, 'mg.water.mustFilter')}</p>
-    </div>
+    </MiniGameFrame>
   );
 };
