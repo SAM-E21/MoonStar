@@ -12,21 +12,36 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
-import { ACADEMY_LESSONS } from '../data/missionData';
+import { ACADEMY_LESSONS, CREW_CHARACTERS } from '../data/missionData';
 import { unlockPassportBadge } from '../engine/simulation';
 import { t } from '../i18n/translations';
 import type { Language } from '../types/game';
+import { CrewAvatar } from './CrewAvatar';
 
 interface AcademyModalProps {
   lang: Language;
   onClose: () => void;
 }
 
+const LESSON_MENTOR_MAP: Record<string, 'sofia' | 'mateo' | 'leo' | 'luna'> = {
+  radiation: 'luna',
+  water: 'mateo',
+  greenhouse: 'leo',
+  solar: 'sofia',
+  comms: 'mateo',
+  lunar: 'luna',
+  batteries: 'mateo',
+  geology: 'sofia',
+};
+
 export const AcademyModal: React.FC<AcademyModalProps> = ({ lang, onClose }) => {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [lastFeedback, setLastFeedback] = useState<'idle' | 'correct' | 'wrong'>('idle');
 
   const lesson = ACADEMY_LESSONS[selectedIdx];
+  const mentorId = LESSON_MENTOR_MAP[lesson.id] ?? 'sofia';
+  const mentor = CREW_CHARACTERS.find((c) => c.id === mentorId) ?? CREW_CHARACTERS[0];
 
   const { totalQuestions, totalCorrect } = useMemo(() => {
     let total = 0;
@@ -99,7 +114,10 @@ export const AcademyModal: React.FC<AcademyModalProps> = ({ lang, onClose }) => 
                 <button
                   key={l.id}
                   type="button"
-                  onClick={() => setSelectedIdx(idx)}
+                  onClick={() => {
+                    setSelectedIdx(idx);
+                    setLastFeedback('idle');
+                  }}
                   className={`text-left px-3 py-2.5 rounded-xl border text-xs font-bold flex items-center justify-between gap-2 cursor-pointer transition-colors ${
                     idx === selectedIdx
                       ? 'bg-emerald-950/70 border-emerald-400 text-white'
@@ -123,6 +141,34 @@ export const AcademyModal: React.FC<AcademyModalProps> = ({ lang, onClose }) => 
           </div>
 
           <div className="bg-[#0c1528] border border-slate-800 rounded-xl p-5 overflow-y-auto space-y-4">
+            {/* Crew Mentor Guide Banner */}
+            <div
+              className={`rounded-xl border p-3 flex items-center gap-3 transition-colors ${
+                lastFeedback === 'correct'
+                  ? 'bg-emerald-950/50 border-emerald-400/60'
+                  : lastFeedback === 'wrong'
+                    ? 'bg-amber-950/45 border-amber-400/60'
+                    : 'bg-[#081022] border-cyan-500/30'
+              }`}
+            >
+              <CrewAvatar suitColor={mentor.suitColor} visorColor={mentor.visorColor} size="md" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-cyan-300">
+                  <span>{t(lang, 'acad.mentorIntro')}</span>
+                  <span>·</span>
+                  <span className="text-white">{t(lang, mentor.nameKey)}</span>
+                  <span className="text-slate-400 font-normal">({t(lang, mentor.roleKey)})</span>
+                </div>
+                <p className="text-xs text-slate-200 mt-0.5 leading-relaxed">
+                  {lastFeedback === 'correct'
+                    ? t(lang, 'acad.mentorHappy')
+                    : lastFeedback === 'wrong'
+                      ? t(lang, 'acad.mentorRetry')
+                      : t(lang, lesson.summaryKey)}
+                </p>
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold uppercase tracking-wider">
                 {renderIcon(lesson.iconName)}
@@ -154,7 +200,10 @@ export const AcademyModal: React.FC<AcademyModalProps> = ({ lang, onClose }) => 
                           <button
                             key={optKey}
                             type="button"
-                            onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: oIdx }))}
+                            onClick={() => {
+                              setAnswers((prev) => ({ ...prev, [q.id]: oIdx }));
+                              setLastFeedback(oIdx === q.correctIndex ? 'correct' : 'wrong');
+                            }}
                             className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
                               selected
                                 ? oIdx === q.correctIndex

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Award, CheckCircle2, Home, Lightbulb, RotateCcw, Target, Trophy } from 'lucide-react';
+import { Award, CheckCircle2, Copy, Home, Lightbulb, RotateCcw, Target, Trophy } from 'lucide-react';
 import { BADGE_DEFINITIONS } from '../data/missionData';
 import { saveChallengeScore } from '../engine/challengeCodes';
 import { t } from '../i18n/translations';
@@ -20,6 +20,7 @@ export const MissionReportModal: React.FC<MissionReportModalProps> = ({
 }) => {
   const [commanderName, setCommanderName] = useState('');
   const [savedScore, setSavedScore] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleSaveScore = (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,7 +149,25 @@ export const MissionReportModal: React.FC<MissionReportModalProps> = ({
                 <Trophy className="w-4 h-4" />
                 {t(lang, 'report.challengeCode')}
               </span>
-              <span className="font-mono text-white">{report.challengeCode}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-white">{report.challengeCode}</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(report.challengeCode);
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1800);
+                    } catch {
+                      // Ignore clipboard permission errors
+                    }
+                  }}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-cyan-200 flex items-center gap-1 cursor-pointer normal-case"
+                >
+                  <Copy className="w-3 h-3" />
+                  {copied ? t(lang, 'code.copied') : t(lang, 'code.copy')}
+                </button>
+              </div>
             </div>
 
             {savedScore ? (

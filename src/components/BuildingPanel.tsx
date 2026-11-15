@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowUpCircle, Gamepad2, Lightbulb, Power, Sparkles, X, Zap } from 'lucide-react';
 import { BUILDING_DEFINITIONS } from '../data/missionData';
+import { BUILDING_TO_MINIGAME } from '../engine/minigames';
 import { t } from '../i18n/translations';
 import type { BuildingId, Language, MiniGameKind, MissionState } from '../types/game';
 
@@ -34,14 +35,7 @@ export const BuildingPanel: React.FC<BuildingPanelProps> = ({
   const canUpgrade =
     state.phase === 'operations' && !b.upgraded && state.energy.current >= def.upgradeCostEnergy;
   const canTogglePower = buildingId !== 'habitat' && buildingId !== 'solar';
-  const miniGameKind: MiniGameKind | null =
-    buildingId === 'solar'
-      ? 'solar_dust'
-      : buildingId === 'comms'
-        ? 'comms_tune'
-        : buildingId === 'rover'
-          ? 'rover_ice'
-          : null;
+  const miniGameKind: MiniGameKind = BUILDING_TO_MINIGAME[buildingId];
 
   return (
     <div className="pointer-events-auto w-80 md:w-96 bg-[#070e1e]/95 border border-cyan-500/40 rounded-2xl p-4 shadow-2xl text-slate-100">

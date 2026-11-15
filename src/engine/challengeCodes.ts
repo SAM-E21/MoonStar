@@ -35,10 +35,16 @@ const CODE_DIFF: Record<string, Difficulty> = {
   V: 'veteran',
 };
 
+export function generateRandomChallengeSeed(): number {
+  return Math.floor(Math.random() * 900) + 100;
+}
+
 export function encodeChallengeCode(config: MissionConfig): string {
   const site = SITE_CODE[config.landingSite] ?? 'SHK';
   const diff = DIFF_CODE[config.difficulty] ?? 'I';
-  const seed = Math.abs(Math.round(config.seed ?? 107)) % 900 + 100;
+  const rawSeed = Math.abs(Math.round(config.seed ?? 419));
+  // Preserve 3-digit seeds (100..999) idempotently so decode -> encode returns the exact same code.
+  const seed = rawSeed >= 100 && rawSeed <= 999 ? rawSeed : (rawSeed % 900) + 100;
   return `MRX-${site}-${config.crewSize}${diff}${config.duration}-${seed}`;
 }
 
@@ -57,7 +63,14 @@ export function decodeChallengeCode(raw: string): Partial<MissionConfig> | null 
   const durNum = Number(meta[2]);
   const seed = Number(parts[3]);
 
-  if ((crewNum !== 2 && crewNum !== 4) || !diff || (durNum !== 5 && durNum !== 7) || !Number.isFinite(seed)) {
+  if (
+    (crewNum !== 2 && crewNum !== 4) ||
+    !diff ||
+    (durNum !== 5 && durNum !== 7) ||
+    !Number.isFinite(seed) ||
+    seed < 100 ||
+    seed > 999
+  ) {
     return null;
   }
 
@@ -80,8 +93,9 @@ export function getChallengeScores(filterCode?: string): ChallengeScoreEntry[] {
     if (!raw) return [];
     const list = JSON.parse(raw) as ChallengeScoreEntry[];
     const valid = Array.isArray(list) ? list : [];
-    const filtered = filterCode
-      ? valid.filter((entry) => entry.code.toUpperCase() === filterCode.toUpperCase())
+    const needle = filterCode?.trim().toUpperCase();
+    const filtered = needle
+      ? valid.filter((entry) => entry.code.toUpperCase().includes(needle))
       : valid;
     return [...filtered].sort((a, b) => b.score - a.score);
   } catch {
@@ -92,14 +106,29 @@ export function getChallengeScores(filterCode?: string): ChallengeScoreEntry[] {
 export function saveChallengeScore(entry: Omit<ChallengeScoreEntry, 'id' | 'date'>): ChallengeScoreEntry[] {
   try {
     const existing = getChallengeScores();
+    const normalizedCode = entry.code.trim().toUpperCase();
     const next: ChallengeScoreEntry[] = [
       {
         ...entry,
+        code: normalizedCode,
         id: `sc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         date: new Date().toISOString().slice(0, 10),
       },
       ...existing,
     ].slice(0, 40);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(CHALLENGE_SCORES_KEY, JSON.stringify(next));
+    }
+    return [...next].sort((a, b) => b.score - a.score);
+  } catch {
+    return [];
+  }
+}
+
+export function deleteChallengeScore(id: string): ChallengeScoreEntry[] {
+  try {
+    const existing = getChallengeScores();
+    const next = existing.filter((entry) => entry.id !== id);
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem(CHALLENGE_SCORES_KEY, JSON.stringify(next));
     }

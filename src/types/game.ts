@@ -51,7 +51,25 @@ export type BadgeId =
   | 'academy_star'
   | 'lunar_survivor';
 
-export type MiniGameKind = 'solar_dust' | 'comms_tune' | 'rover_ice';
+export type MiniGameKind =
+  | 'habitat_systems'
+  | 'solar_align'
+  | 'greenhouse_balance'
+  | 'water_pipes'
+  | 'oxygen_mix'
+  | 'comms_tune'
+  | 'shelter_prep'
+  | 'rover_ice'
+  | 'research_lab';
+
+export type MiniGameDifficulty = 'easy' | 'normal' | 'hard';
+
+export interface MiniGameOutcome {
+  kind: MiniGameKind;
+  won: boolean;
+  difficulty: MiniGameDifficulty;
+  scorePct: number;
+}
 
 export interface ResourceMetric {
   current: number;

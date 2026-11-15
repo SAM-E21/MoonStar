@@ -33,7 +33,16 @@ import {
   upgradeBuilding,
 } from './engine/simulation';
 import { LunarOutpostScene } from './three/LunarOutpostScene';
-import type { BuildingId, DonkiEventItem, Language, MiniGameKind, MissionConfig, MissionState, ScreenMode } from './types/game';
+import type {
+  BuildingId,
+  DonkiEventItem,
+  Language,
+  MiniGameKind,
+  MiniGameOutcome,
+  MissionConfig,
+  MissionState,
+  ScreenMode,
+} from './types/game';
 
 export default function App() {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -252,11 +261,11 @@ export default function App() {
     setMission((prev) => (prev ? triggerRealNasaSpaceWeatherEvent(prev, ev) : prev));
   };
 
-  const handleCompleteMiniGame = (kind: MiniGameKind, won: boolean) => {
-    if (won) soundEngine.playActionSuccess();
-    else soundEngine.playClick();
+  const handleCompleteMiniGame = (outcome: MiniGameOutcome) => {
+    if (outcome.won) soundEngine.playActionSuccess();
+    else soundEngine.playAlert();
     setActiveMiniGame(null);
-    setMission((prev) => (prev ? applyMiniGameReward(prev, kind, won) : prev));
+    setMission((prev) => (prev ? applyMiniGameReward(prev, outcome) : prev));
   };
 
   const report = useMemo(() => {

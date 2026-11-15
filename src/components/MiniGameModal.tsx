@@ -1,290 +1,247 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Bot, CheckCircle2, CloudFog, Mountain, Radio, Snowflake, Sparkles, Sun, X } from 'lucide-react';
+import { CheckCircle2, Lightbulb, Pause, Play, RefreshCw, Sparkles, X } from 'lucide-react';
+import { soundEngine } from '../audio/soundEngine';
+import { createRandomMiniGameSeed, getMiniGameTimeLimit } from '../engine/minigames';
 import { t } from '../i18n/translations';
-import type { Language, MiniGameKind } from '../types/game';
+import type { Language, MiniGameDifficulty, MiniGameKind, MiniGameOutcome } from '../types/game';
+import { CommsMiniGame } from './minigames/CommsMiniGame';
+import { GreenhouseMiniGame } from './minigames/GreenhouseMiniGame';
+import { HabitatMiniGame } from './minigames/HabitatMiniGame';
+import { OxygenMiniGame } from './minigames/OxygenMiniGame';
+import { ResearchMiniGame } from './minigames/ResearchMiniGame';
+import { RoverMiniGame } from './minigames/RoverMiniGame';
+import { ShelterMiniGame } from './minigames/ShelterMiniGame';
+import { SolarMiniGame } from './minigames/SolarMiniGame';
+import { WaterPipesMiniGame } from './minigames/WaterPipesMiniGame';
 
 interface MiniGameModalProps {
   lang: Language;
   kind: MiniGameKind;
-  onComplete: (kind: MiniGameKind, won: boolean) => void;
+  onComplete: (outcome: MiniGameOutcome) => void;
   onClose: () => void;
 }
 
 export const MiniGameModal: React.FC<MiniGameModalProps> = ({ lang, kind, onComplete, onClose }) => {
-  // Game 1: Solar Dust Cleaning (click/hover 12 tiles)
-  const [dustTiles, setDustTiles] = useState<boolean[]>(() => Array(12).fill(true));
-  const [timeLeft, setTimeLeft] = useState(15);
+  const [difficulty, setDifficulty] = useState<MiniGameDifficulty>('normal');
+  const [runKey, setRunKey] = useState(1);
+  const [seed, setSeed] = useState(() => createRandomMiniGameSeed());
+  const [paused, setPaused] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(() => getMiniGameTimeLimit(kind, 'normal'));
+  const [result, setResult] = useState<{ won: boolean; scorePct: number } | null>(null);
 
-  // Game 2: Comms Frequency Tuner
-  const [freq, setFreq] = useState(32);
-  const [tilt, setTilt] = useState(74);
-  const targetFreq = 68;
-  const targetTilt = 45;
-
-  // Game 3: Rover Ice Path (5 cols x 4 rows)
-  const [roverPos, setRoverPos] = useState({ x: 0, y: 0 });
-  const [collectedIce, setCollectedIce] = useState<string[]>([]);
-  const iceCells = ['1,2', '3,1', '4,3'];
-  const rockCells = ['1,0', '2,2', '3,2'];
-
-  const [finished, setFinished] = useState<boolean | null>(null);
+  const rerollChallenge = () => {
+    soundEngine.playClick();
+    setTimeLeft(getMiniGameTimeLimit(kind, difficulty));
+    setResult(null);
+    setPaused(false);
+    setSeed(createRandomMiniGameSeed());
+    setRunKey((k) => k + 1);
+  };
 
   useEffect(() => {
-    if (finished !== null) return;
+    setTimeLeft(getMiniGameTimeLimit(kind, difficulty));
+    setResult(null);
+    setPaused(false);
+    setSeed(createRandomMiniGameSeed());
+    setRunKey((k) => k + 1);
+  }, [kind, difficulty]);
+
+  useEffect(() => {
+    if (result !== null || paused) return;
     const timer = window.setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
-          setFinished(false);
+          soundEngine.playAlert();
+          setResult({ won: false, scorePct: 0 });
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [finished]);
+  }, [result, paused]);
 
-  const cleanTile = (idx: number) => {
-    if (finished !== null) return;
-    setDustTiles((prev) => {
-      if (!prev[idx]) return prev;
-      const next = [...prev];
-      next[idx] = false;
-      if (next.every((dirty) => !dirty)) {
-        setFinished(true);
+  const handlePenaltySeconds = (sec: number) => {
+    setTimeLeft((prev) => {
+      const next = Math.max(0, prev - sec);
+      if (next === 0 && result === null) {
+        soundEngine.playAlert();
+        setResult({ won: false, scorePct: 0 });
       }
       return next;
     });
   };
 
-  const checkCommsLock = () => {
-    if (finished !== null) return;
-    if (Math.abs(freq - targetFreq) <= 8 && Math.abs(tilt - targetTilt) <= 8) {
-      setFinished(true);
-    }
+  const handleWin = (scorePct: number) => {
+    if (result !== null) return;
+    setResult({ won: true, scorePct });
   };
 
-  const moveRover = (dx: number, dy: number) => {
-    if (finished !== null) return;
-    const nx = Math.max(0, Math.min(4, roverPos.x + dx));
-    const ny = Math.max(0, Math.min(3, roverPos.y + dy));
-    const key = `${nx},${ny}`;
-    if (rockCells.includes(key)) return;
-    setRoverPos({ x: nx, y: ny });
-    if (iceCells.includes(key) && !collectedIce.includes(key)) {
-      const nextIce = [...collectedIce, key];
-      setCollectedIce(nextIce);
-      if (nextIce.length === iceCells.length) {
-        setFinished(true);
-      }
-    }
+  const handleFail = () => {
+    if (result !== null) return;
+    soundEngine.playAlert();
+    setResult({ won: false, scorePct: 0 });
   };
 
-  const isLockedComms = Math.abs(freq - targetFreq) <= 8 && Math.abs(tilt - targetTilt) <= 8;
+  const commonProps = {
+    lang,
+    difficulty,
+    paused: paused || result !== null,
+    timeLeft,
+    seed,
+    onPenaltySeconds: handlePenaltySeconds,
+    onWin: handleWin,
+    onFail: handleFail,
+  };
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#040813]/85 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg bg-[#081022] border border-cyan-500/45 rounded-2xl p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-3 mb-4">
+    <div className="fixed inset-0 z-40 bg-[#040813]/85 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-xl bg-[#081022] border border-cyan-500/45 rounded-2xl p-5 md:p-6 shadow-2xl my-auto">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3 mb-3">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-300">
-              {t(lang, 'mg.badge')} · {timeLeft}s
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-amber-300">
+              <span>{t(lang, 'mg.badge')}</span>
+              <span>·</span>
+              <span className={timeLeft <= 6 ? 'text-red-400 animate-pulse font-black' : 'text-cyan-300 font-black'}>
+                {timeLeft}s
+              </span>
             </div>
-            <h2 className="text-xl font-extrabold text-white mt-0.5">{t(lang, `mg.${kind}.title`)}</h2>
-            <p className="text-xs text-slate-300 mt-0.5">{t(lang, `mg.${kind}.desc`)}</p>
+            <h2 className="text-lg md:text-xl font-extrabold text-white mt-0.5">{t(lang, `mg.${kind}.title`)}</h2>
+            <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">{t(lang, `mg.${kind}.desc`)}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t(lang, 'bld.close')}
-            className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {result === null && (
+              <>
+                <button
+                  type="button"
+                  onClick={rerollChallenge}
+                  aria-label={t(lang, 'mg.newRandom')}
+                  title={t(lang, 'mg.newRandom')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-cyan-200 flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{t(lang, 'mg.newRandom')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaused((p) => !p)}
+                  aria-label={paused ? t(lang, 'mg.resume') : t(lang, 'mg.pause')}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1 cursor-pointer"
+                >
+                  {paused ? <Play className="w-3.5 h-3.5 text-emerald-300" /> : <Pause className="w-3.5 h-3.5 text-amber-300" />}
+                  {paused ? t(lang, 'mg.resume') : t(lang, 'mg.pause')}
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t(lang, 'bld.close')}
+              className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Mini-game 1: Solar Dust Clean */}
-        {kind === 'solar_dust' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-4 gap-2 bg-[#0c162d] p-3 rounded-xl border border-slate-800">
-              {dustTiles.map((dirty, idx) => (
+        {/* Difficulty Selector */}
+        {result === null && (
+          <div className="flex items-center justify-between gap-2 mb-3 bg-[#0c162d] border border-slate-800 rounded-xl px-3 py-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              {t(lang, 'mg.diff.label')}:
+            </span>
+            <div className="flex gap-1.5">
+              {(['easy', 'normal', 'hard'] as MiniGameDifficulty[]).map((diff) => (
                 <button
-                  key={idx}
+                  key={diff}
                   type="button"
-                  onClick={() => cleanTile(idx)}
-                  onMouseEnter={(e) => {
-                    if (e.buttons === 1) cleanTile(idx);
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setDifficulty(diff);
                   }}
-                  className={`h-14 rounded-lg border font-bold text-xs flex items-center justify-center cursor-pointer transition-colors ${
-                    dirty
-                      ? 'bg-amber-900/60 border-amber-500/50 text-amber-200 hover:bg-amber-800/70'
-                      : 'bg-sky-500/25 border-cyan-400 text-cyan-200'
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold border cursor-pointer transition-colors ${
+                    difficulty === diff
+                      ? diff === 'hard'
+                        ? 'bg-amber-400 text-slate-950 border-amber-300'
+                        : 'bg-cyan-400 text-slate-950 border-cyan-300'
+                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
                   }`}
                 >
-                  {dirty ? (
-                    <span className="flex items-center gap-1.5">
-                      <CloudFog className="w-4 h-4 text-amber-300" />
-                      {t(lang, 'mg.dustLabel')}
-                    </span>
-                  ) : (
-                    <Sun className="w-5 h-5 text-yellow-300" />
-                  )}
+                  {t(lang, `mg.diff.${diff}`)}
                 </button>
               ))}
             </div>
-            <div className="text-xs text-center text-cyan-300 font-semibold">
-              {dustTiles.filter((d) => !d).length}/12 {t(lang, 'mg.solar_dust.progress')}
-            </div>
           </div>
         )}
 
-        {/* Mini-game 2: Comms Frequency Tuner */}
-        {kind === 'comms_tune' && (
-          <div className="space-y-4 bg-[#0c162d] p-4 rounded-xl border border-slate-800">
-            <div>
-              <div className="flex justify-between text-xs text-slate-200 mb-1">
-                <span>{t(lang, 'mg.comms_tune.freq')}</span>
-                <span className="font-bold text-cyan-300 tabular-nums">
-                  {freq} MHz ({t(lang, 'mg.comms_tune.target')}: ~{targetFreq})
-                </span>
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                value={freq}
-                onChange={(e) => setFreq(Number(e.target.value))}
-                className="w-full accent-cyan-400 cursor-pointer"
-              />
+        {/* Active Module Mini-Game Surface */}
+        <div className="relative">
+          {paused && result === null && (
+            <div className="absolute inset-0 z-10 bg-[#050814]/85 rounded-xl flex flex-col items-center justify-center gap-2 border border-amber-400/40">
+              <div className="text-sm font-extrabold text-amber-300">{t(lang, 'mg.pausedBanner')}</div>
+              <button
+                type="button"
+                onClick={() => setPaused(false)}
+                className="px-4 py-2 rounded-xl bg-emerald-400 text-slate-950 text-xs font-extrabold cursor-pointer"
+              >
+                {t(lang, 'mg.resume')}
+              </button>
             </div>
+          )}
 
-            <div>
-              <div className="flex justify-between text-xs text-slate-200 mb-1">
-                <span>{t(lang, 'mg.comms_tune.angle')}</span>
-                <span className="font-bold text-violet-300 tabular-nums">
-                  {tilt}° ({t(lang, 'mg.comms_tune.target')}: ~{targetTilt}°)
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={90}
-                value={tilt}
-                onChange={(e) => setTilt(Number(e.target.value))}
-                className="w-full accent-violet-400 cursor-pointer"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={checkCommsLock}
-              disabled={!isLockedComms || finished !== null}
-              className={`w-full py-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 transition-colors ${
-                isLockedComms
-                  ? 'bg-emerald-400 hover:bg-emerald-300 text-slate-950 cursor-pointer'
-                  : 'bg-slate-800 text-slate-400 cursor-not-allowed'
-              }`}
-            >
-              <Radio className="w-4 h-4" />
-              {isLockedComms ? t(lang, 'mg.comms_tune.lock') : t(lang, 'mg.comms_tune.adjust')}
-            </button>
+          <div key={runKey}>
+            {kind === 'habitat_systems' && <HabitatMiniGame {...commonProps} />}
+            {kind === 'solar_align' && <SolarMiniGame {...commonProps} />}
+            {kind === 'greenhouse_balance' && <GreenhouseMiniGame {...commonProps} />}
+            {kind === 'water_pipes' && <WaterPipesMiniGame {...commonProps} />}
+            {kind === 'oxygen_mix' && <OxygenMiniGame {...commonProps} />}
+            {kind === 'comms_tune' && <CommsMiniGame {...commonProps} />}
+            {kind === 'shelter_prep' && <ShelterMiniGame {...commonProps} />}
+            {kind === 'rover_ice' && <RoverMiniGame {...commonProps} />}
+            {kind === 'research_lab' && <ResearchMiniGame {...commonProps} />}
           </div>
-        )}
+        </div>
 
-        {/* Mini-game 3: Rover Ice Path */}
-        {kind === 'rover_ice' && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-5 gap-1.5 bg-[#0c162d] p-3 rounded-xl border border-slate-800">
-              {Array.from({ length: 4 }).map((_, y) =>
-                Array.from({ length: 5 }).map((__, x) => {
-                  const key = `${x},${y}`;
-                  const isRover = roverPos.x === x && roverPos.y === y;
-                  const isRock = rockCells.includes(key);
-                  const isIce = iceCells.includes(key) && !collectedIce.includes(key);
-                  return (
-                    <div
-                      key={key}
-                      className={`h-11 rounded-lg border flex items-center justify-center text-sm font-bold ${
-                        isRover
-                          ? 'bg-amber-400 text-slate-950 border-amber-200'
-                          : isRock
-                            ? 'bg-slate-800 border-slate-700 text-slate-400'
-                            : isIce
-                              ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200'
-                              : 'bg-[#081020] border-slate-800 text-slate-600'
-                      }`}
-                    >
-                      {isRover ? (
-                        <Bot className="w-5 h-5" />
-                      ) : isRock ? (
-                        <Mountain className="w-4 h-4" />
-                      ) : isIce ? (
-                        <Snowflake className="w-4 h-4" />
-                      ) : (
-                        '·'
-                      )}
-                    </div>
-                  );
-                }),
-              )}
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
-                <Snowflake className="w-4 h-4" />
-                {collectedIce.length}/{iceCells.length}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => moveRover(-1, 0)}
-                  aria-label="Left"
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveRover(0, -1)}
-                  aria-label="Up"
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveRover(0, 1)}
-                  aria-label="Down"
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-                >
-                  <ArrowDown className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveRover(1, 0)}
-                  aria-label="Right"
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white cursor-pointer"
-                >
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Result Footer */}
-        {finished !== null && (
+        {/* Result + Educational Takeaway Footer */}
+        {result !== null && (
           <div
             className={`mt-4 p-4 rounded-xl border flex flex-col gap-3 ${
-              finished ? 'bg-emerald-950/50 border-emerald-400/60' : 'bg-amber-950/45 border-amber-500/50'
+              result.won ? 'bg-emerald-950/50 border-emerald-400/60' : 'bg-amber-950/45 border-amber-500/50'
             }`}
           >
-            <div className="flex items-center gap-2 text-sm font-extrabold text-white">
-              {finished ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Sparkles className="w-5 h-5 text-amber-300" />}
-              {finished ? t(lang, `mg.${kind}.win`) : t(lang, 'mg.timeout')}
+            <div className="flex items-start gap-2 text-sm font-extrabold text-white">
+              {result.won ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <Sparkles className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+              )}
+              <div>
+                <div>{result.won ? t(lang, `mg.${kind}.win`) : t(lang, `mg.${kind}.fail`)}</div>
+                {result.won && (
+                  <div className="text-xs text-emerald-300 font-bold mt-0.5">
+                    {t(lang, `mg.diff.${difficulty}`)} · {result.scorePct}%
+                  </div>
+                )}
+              </div>
             </div>
+
+            <div className="bg-[#081022]/80 border border-slate-700/80 rounded-lg p-2.5 flex items-start gap-2 text-xs text-cyan-200">
+              <Lightbulb className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
+              <span>{t(lang, `mg.${kind}.learn`)}</span>
+            </div>
+
             <button
               type="button"
-              onClick={() => onComplete(kind, finished)}
+              onClick={() =>
+                onComplete({
+                  kind,
+                  won: result.won,
+                  difficulty,
+                  scorePct: result.scorePct,
+                })
+              }
               className="w-full py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-extrabold text-xs cursor-pointer"
             >
               {t(lang, 'mg.claim')}

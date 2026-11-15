@@ -4,7 +4,10 @@ import {
   BookOpen,
   Calendar,
   Check,
+  ClipboardPaste,
   Compass,
+  Copy,
+  Dices,
   Droplet,
   Hash,
   MapPin,
@@ -22,7 +25,7 @@ import {
   LANDING_SITES,
   MISSION_PRIORITIES,
 } from '../data/missionData';
-import { decodeChallengeCode, encodeChallengeCode } from '../engine/challengeCodes';
+import { decodeChallengeCode, encodeChallengeCode, generateRandomChallengeSeed } from '../engine/challengeCodes';
 import { t } from '../i18n/translations';
 import type {
   CommanderRole,
@@ -54,6 +57,7 @@ export const MissionPrepModal: React.FC<MissionPrepModalProps> = ({ lang, onBack
   const [seed, setSeed] = useState<number>(419);
   const [challengeInput, setChallengeInput] = useState<string>('');
   const [challengeStatus, setChallengeStatus] = useState<'idle' | 'applied' | 'invalid'>('idle');
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const activeSite = LANDING_SITES.find((s) => s.id === landingSite) ?? LANDING_SITES[0];
 
@@ -381,14 +385,40 @@ export const MissionPrepModal: React.FC<MissionPrepModalProps> = ({ lang, onBack
                 </button>
 
                 <div className="pt-2 border-t border-slate-800 space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px]">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
                     <span className="font-bold text-slate-300 flex items-center gap-1">
                       <Hash className="w-3.5 h-3.5 text-amber-300" />
                       {t(lang, 'prep.challenge.title')}
                     </span>
-                    <span className="font-mono font-bold text-cyan-300" title={t(lang, 'prep.challenge.yourCode')}>
-                      {liveChallengeCode}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-bold text-cyan-300" title={t(lang, 'prep.challenge.yourCode')}>
+                        {liveChallengeCode}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSeed(generateRandomChallengeSeed())}
+                        title={t(lang, 'prep.challenge.random')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-amber-200 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Dices className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(liveChallengeCode);
+                            setCopiedCode(true);
+                            window.setTimeout(() => setCopiedCode(false), 1800);
+                          } catch {
+                            setChallengeInput(liveChallengeCode);
+                          }
+                        }}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-bold text-cyan-200 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy className="w-3 h-3" />
+                        {copiedCode ? t(lang, 'code.copied') : t(lang, 'code.copy')}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex gap-1.5">
                     <input
@@ -402,6 +432,25 @@ export const MissionPrepModal: React.FC<MissionPrepModalProps> = ({ lang, onBack
                       aria-label={t(lang, 'prep.challenge.title')}
                       className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#081020] border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
                     />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const text = await navigator.clipboard.readText();
+                          if (text) {
+                            setChallengeInput(text.trim());
+                            setChallengeStatus('idle');
+                          }
+                        } catch {
+                          // Fallback gracefully if clipboard read permission denied
+                        }
+                      }}
+                      title={t(lang, 'code.paste')}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <ClipboardPaste className="w-3.5 h-3.5" />
+                      {t(lang, 'code.paste')}
+                    </button>
                     <button
                       type="button"
                       onClick={handleApplyChallenge}

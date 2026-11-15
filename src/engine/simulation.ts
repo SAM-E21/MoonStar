@@ -9,7 +9,9 @@ import type {
   DonkiEventItem,
   EventChoice,
   GameEvent,
+  MiniGameDifficulty,
   MiniGameKind,
+  MiniGameOutcome,
   MissionConfig,
   MissionObjective,
   MissionReport,
@@ -572,52 +574,233 @@ export function performBuildingAction(state: MissionState, buildingId: BuildingI
   return refreshRates(next);
 }
 
-export function applyMiniGameReward(state: MissionState, kind: MiniGameKind, won: boolean): MissionState {
-  if (!won || state.status !== 'active') return state;
+export function applyMiniGameReward(
+  state: MissionState,
+  kindOrOutcome: MiniGameKind | MiniGameOutcome,
+  wonArg?: boolean,
+  difficultyArg: MiniGameDifficulty = 'normal',
+  scorePctArg = 85,
+): MissionState {
+  if (state.status !== 'active') return state;
+
+  const outcome: MiniGameOutcome =
+    typeof kindOrOutcome === 'string'
+      ? {
+          kind: kindOrOutcome,
+          won: Boolean(wonArg),
+          difficulty: difficultyArg,
+          scorePct: clamp(scorePctArg, 0, 100),
+        }
+      : kindOrOutcome;
+
+  const diffMult = outcome.difficulty === 'hard' ? 1.4 : outcome.difficulty === 'normal' ? 1.15 : 1.0;
+  const perfMult = 0.8 + (clamp(outcome.scorePct, 0, 100) / 100) * 0.4;
+  const scaleGain = (base: number) => Math.max(1, Math.round(base * diffMult * perfMult));
 
   const buildings = { ...state.buildings };
+
+  // Realistic, fair simulation consequences if a mini-game times out / fails
+  if (!outcome.won) {
+    let failedState: MissionState = { ...state, buildings };
+    switch (outcome.kind) {
+      case 'habitat_systems':
+        buildings.habitat = { ...buildings.habitat, efficiency: clamp(buildings.habitat.efficiency - 0.05, 0.45, 1.45) };
+        failedState = {
+          ...failedState,
+          crewHealth: clamp(failedState.crewHealth - 4, 0, 100),
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 3, 0, failedState.energy.max) },
+        };
+        break;
+      case 'solar_align':
+        buildings.solar = {
+          ...buildings.solar,
+          dustLevel: clamp(buildings.solar.dustLevel + 8, 0, 85),
+          efficiency: clamp(buildings.solar.efficiency - 0.04, 0.45, 1.45),
+        };
+        failedState = {
+          ...failedState,
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 5, 0, failedState.energy.max) },
+        };
+        break;
+      case 'greenhouse_balance':
+        buildings.greenhouse = {
+          ...buildings.greenhouse,
+          efficiency: clamp(buildings.greenhouse.efficiency - 0.06, 0.45, 1.45),
+        };
+        failedState = {
+          ...failedState,
+          food: { ...failedState.food, current: clamp(failedState.food.current - 5, 0, failedState.food.max) },
+        };
+        break;
+      case 'water_pipes':
+        buildings.water = { ...buildings.water, efficiency: clamp(buildings.water.efficiency - 0.06, 0.45, 1.45) };
+        failedState = {
+          ...failedState,
+          water: { ...failedState.water, current: clamp(failedState.water.current - 6, 0, failedState.water.max) },
+        };
+        break;
+      case 'oxygen_mix':
+        buildings.oxygen = { ...buildings.oxygen, efficiency: clamp(buildings.oxygen.efficiency - 0.06, 0.45, 1.45) };
+        failedState = {
+          ...failedState,
+          oxygen: { ...failedState.oxygen, current: clamp(failedState.oxygen.current - 6, 0, failedState.oxygen.max) },
+        };
+        break;
+      case 'comms_tune':
+        failedState = {
+          ...failedState,
+          commsQuality: clamp(failedState.commsQuality - 8, 0, 100),
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 3, 0, failedState.energy.max) },
+        };
+        break;
+      case 'shelter_prep':
+        failedState = {
+          ...failedState,
+          radiationRisk: clamp(failedState.radiationRisk + 6, 0, 100),
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 4, 0, failedState.energy.max) },
+        };
+        break;
+      case 'rover_ice':
+        failedState = {
+          ...failedState,
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 5, 0, failedState.energy.max) },
+          radiationRisk: clamp(failedState.radiationRisk + 4, 0, 100),
+        };
+        break;
+      case 'research_lab':
+        buildings.research = {
+          ...buildings.research,
+          efficiency: clamp(buildings.research.efficiency - 0.05, 0.45, 1.45),
+        };
+        failedState = {
+          ...failedState,
+          energy: { ...failedState.energy, current: clamp(failedState.energy.current - 4, 0, failedState.energy.max) },
+        };
+        break;
+    }
+    return refreshRates({ ...failedState, buildings });
+  }
+
   let next: MissionState = {
     ...state,
     miniGamesWon: state.miniGamesWon + 1,
   };
 
-  if (kind === 'solar_dust') {
-    buildings.solar = {
-      ...buildings.solar,
-      dustLevel: 0,
-      efficiency: clamp(buildings.solar.efficiency + 0.18, 0.4, 1.45),
-      activeBoost: true,
-    };
-    next = {
-      ...next,
-      energy: { ...next.energy, current: clamp(next.energy.current + 10, 0, next.energy.max) },
-      buildings,
-    };
-  } else if (kind === 'comms_tune') {
-    buildings.comms = {
-      ...buildings.comms,
-      efficiency: clamp(buildings.comms.efficiency + 0.12, 0.4, 1.45),
-      activeBoost: true,
-    };
-    next = {
-      ...next,
-      commsQuality: clamp(next.commsQuality + 18, 0, 100),
-      researchPoints: next.researchPoints + 8,
-      buildings,
-    };
-  } else if (kind === 'rover_ice') {
-    buildings.rover = {
-      ...buildings.rover,
-      efficiency: clamp(buildings.rover.efficiency + 0.12, 0.4, 1.45),
-      activeBoost: true,
-    };
-    next = {
-      ...next,
-      water: { ...next.water, current: clamp(next.water.current + 10, 0, next.water.max) },
-      environmentalDataSamples: next.environmentalDataSamples + 1,
-      researchPoints: next.researchPoints + 12,
-      buildings,
-    };
+  switch (outcome.kind) {
+    case 'habitat_systems':
+      buildings.habitat = {
+        ...buildings.habitat,
+        efficiency: clamp(buildings.habitat.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        crewHealth: clamp(next.crewHealth + scaleGain(8), 0, 100),
+        buildings,
+      };
+      break;
+    case 'solar_align':
+      buildings.solar = {
+        ...buildings.solar,
+        dustLevel: 0,
+        efficiency: clamp(buildings.solar.efficiency + 0.16 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        energy: { ...next.energy, current: clamp(next.energy.current + scaleGain(11), 0, next.energy.max) },
+        buildings,
+      };
+      break;
+    case 'greenhouse_balance':
+      buildings.greenhouse = {
+        ...buildings.greenhouse,
+        efficiency: clamp(buildings.greenhouse.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        food: { ...next.food, current: clamp(next.food.current + scaleGain(10), 0, next.food.max) },
+        buildings,
+      };
+      break;
+    case 'water_pipes':
+      buildings.water = {
+        ...buildings.water,
+        efficiency: clamp(buildings.water.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        water: { ...next.water, current: clamp(next.water.current + scaleGain(11), 0, next.water.max) },
+        buildings,
+      };
+      break;
+    case 'oxygen_mix':
+      buildings.oxygen = {
+        ...buildings.oxygen,
+        efficiency: clamp(buildings.oxygen.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        oxygen: { ...next.oxygen, current: clamp(next.oxygen.current + scaleGain(11), 0, next.oxygen.max) },
+        buildings,
+      };
+      break;
+    case 'comms_tune':
+      buildings.comms = {
+        ...buildings.comms,
+        efficiency: clamp(buildings.comms.efficiency + 0.12 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        commsQuality: clamp(next.commsQuality + scaleGain(16), 0, 100),
+        researchPoints: next.researchPoints + scaleGain(7),
+        buildings,
+      };
+      break;
+    case 'shelter_prep':
+      buildings.shelter = {
+        ...buildings.shelter,
+        efficiency: clamp(buildings.shelter.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        crewSheltered: true,
+        radiationRisk: clamp(next.radiationRisk - scaleGain(14), 0, 100),
+        buildings,
+      };
+      break;
+    case 'rover_ice':
+      buildings.rover = {
+        ...buildings.rover,
+        efficiency: clamp(buildings.rover.efficiency + 0.12 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        water: { ...next.water, current: clamp(next.water.current + scaleGain(9), 0, next.water.max) },
+        environmentalDataSamples: next.environmentalDataSamples + (outcome.difficulty === 'hard' ? 2 : 1),
+        researchPoints: next.researchPoints + scaleGain(11),
+        buildings,
+      };
+      break;
+    case 'research_lab':
+      buildings.research = {
+        ...buildings.research,
+        efficiency: clamp(buildings.research.efficiency + 0.14 * diffMult, 0.4, 1.45),
+        activeBoost: true,
+      };
+      next = {
+        ...next,
+        researchPoints: next.researchPoints + scaleGain(14),
+        environmentalDataSamples: next.environmentalDataSamples + 1,
+        buildings,
+      };
+      break;
   }
 
   return refreshRates(next);

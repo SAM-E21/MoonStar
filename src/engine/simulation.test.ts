@@ -91,19 +91,27 @@ test('challenge codes encode and decode deterministically', () => {
     duration: 7,
     seed: 512,
   });
+  assert.equal(code, 'MRX-CAB-4V7-512');
   const parsed = decodeChallengeCode(code);
   assert.ok(parsed !== null);
   assert.equal(parsed?.landingSite, 'cabeus');
   assert.equal(parsed?.crewSize, 4);
   assert.equal(parsed?.difficulty, 'veteran');
   assert.equal(parsed?.duration, 7);
+  assert.equal(parsed?.seed, 512);
+  // Idempotent re-encoding must keep the exact same code!
+  const reencoded = encodeChallengeCode({
+    ...BASE_CONFIG,
+    ...parsed,
+  });
+  assert.equal(reencoded, code);
 });
 
 test('mini-games, badges, crew lines, and live NASA weather simulation integrate cleanly', () => {
   let state = createInitialMission({ ...BASE_CONFIG, crewSize: 4 });
   state = startOperationsPhase(state);
 
-  state = applyMiniGameReward(state, 'solar_dust', true);
+  state = applyMiniGameReward(state, 'solar_align', true);
   assert.equal(state.miniGamesWon, 1);
   assert.ok(state.unlockedBadges.includes('solar_guardian'));
 
